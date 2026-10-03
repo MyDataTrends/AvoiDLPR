@@ -20,6 +20,8 @@ export interface RouteSite {
   site: number;
   /** Metres along the route at which the vehicle enters this site's capture zone. */
   atM: number;
+  /** Metres along the route at which it leaves the zone (the last capture, if it re-enters). */
+  untilM: number;
   cameras: Camera[];
 }
 
@@ -159,7 +161,7 @@ export class Router {
     const { edgeGeom, edgeRev, edgeTime, edgeH0, edgeH1, geomLen } = pack;
     const { edges } = path;
     let timeS = 0, distanceM = 0, turns = 0;
-    const firstAt = new Map<number, number>();
+    const span = new Map<number, [number, number]>(); // site -> [first, last] metres along the route
     const coordinates: [number, number][] = [];
     edges.forEach((e, i) => {
       const L = geomLen[edgeGeom[e]];
@@ -171,15 +173,18 @@ export class Router {
       }
       if (L > 0) timeS += edgeTime[e] * ((b - a) / L);
       for (let k = exposure.ptr[e]; k < exposure.ptr[e + 1]; k++) {
-        if (exposure.entry[k] <= b && exposure.exit[k] >= a && !firstAt.has(exposure.site[k])) {
-          firstAt.set(exposure.site[k], distanceM + Math.max(exposure.entry[k], a) - a);
-        }
+        if (exposure.entry[k] > b || exposure.exit[k] < a) continue;
+        const from = distanceM + Math.max(exposure.entry[k], a) - a;
+        const to = distanceM + Math.min(exposure.exit[k], b) - a;
+        const seen = span.get(exposure.site[k]);
+        if (seen) seen[1] = Math.max(seen[1], to);
+        else span.set(exposure.site[k], [from, to]);
       }
       distanceM += b - a;
       this.appendCoordinates(coordinates, edgeGeom[e], edgeRev[e] === 1, a, b);
     });
-    const sites = [...firstAt].sort((x, y) => x[1] - y[1]).map(([site, atM]) => ({
-      site, atM, cameras: this.cameras.siteCameras[site].map((c) => this.cameras.cameras[c]),
+    const sites = [...span].sort((x, y) => x[1][0] - y[1][0]).map(([site, [atM, untilM]]) => ({
+      site, atM, untilM, cameras: this.cameras.siteCameras[site].map((c) => this.cameras.cameras[c]),
     }));
     return { lambda, cost: path.cost, timeS, distanceM, turns, sites, edges, coordinates };
   }

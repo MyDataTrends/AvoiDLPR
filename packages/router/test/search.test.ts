@@ -56,7 +56,8 @@ describe("avoiding cameras", () => {
     const fastest = flock.route(at(flock, 1), at(flock, 21))!;
     near(fastest.timeS, 96);
     assert.equal(fastest.sites.length, 1);
-    near(fastest.sites[0].atM, 200 - 10.9, 5.5);
+    near(fastest.sites[0].atM, 200 - 10.9, 5.5); // zone opens 10.9 m before node 6...
+    near(fastest.sites[0].untilM, 200 + 61.8, 5.5); // ...and closes 61.8 m after it
     const avoid = flock.route(at(flock, 1), at(flock, 21), { lambda: 300 })!;
     assert.equal(avoid.sites.length, 0);
     near(avoid.timeS, 24 + 9 + 96 + 9 + 24); // up column 1 and back

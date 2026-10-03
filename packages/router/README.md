@@ -17,8 +17,8 @@ router.setCameras(updatedRecords);                 // hourly feed, or the user's
 ```
 
 A `Route` carries `timeS`, `distanceM`, `turns`, `coordinates` ([lon, lat]) and `sites`: the
-capture sites in the order you reach them, with `atM` (metres along the route), which drives
-"camera ahead" alerts.
+capture sites in the order you reach them. Each has `atM` and `untilM`, metres along the route
+where its zone starts and ends; they drive the "camera ahead" and "in a camera zone" alerts.
 
 ## How it works
 
