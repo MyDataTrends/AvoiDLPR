@@ -14,7 +14,8 @@ and roads come from OpenStreetMap. Both are © OpenStreetMap contributors, ODbL.
 | [spike/routing/ROUTING.md](spike/routing/ROUTING.md) | Routing spike: capture-zone math, Dallas trade-offs, engine comparison |
 | [pipeline/](pipeline) | Python: OSM extract → road pack (`.fwr`) + camera feed |
 | [packages/router](packages/router) | TypeScript on-device router (zone predicate, exposure, edge-based A\*, budgets) |
-| `data/` | Local build outputs (gitignored) |
+| [apps/web](apps/web) | Browser demo: MapLibre + self-hosted Protomaps basemap, routing in a Web Worker |
+| `data/` | Local build outputs: road packs, camera feed, basemap (gitignored) |
 
 ## Build and test
 
@@ -30,4 +31,8 @@ npm install
 npm test && npm run typecheck                         # TypeScript
 .venv/Scripts/python -m pytest -q pipeline spike/routing
 npm run bench -w @flockwatch/router                   # Dallas benchmark
+
+# Web demo (basemap fetch needs the pmtiles CLI: github.com/protomaps/go-pmtiles)
+npm run fetch-basemap -w @flockwatch/web
+npm run dev -w @flockwatch/web                        # http://localhost:5173
 ```

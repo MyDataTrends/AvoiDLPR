@@ -9,3 +9,5 @@ spike/*.log
 spike/q.txt
 spike/routing/data/
 data/
+tools/
+apps/web/dist/
