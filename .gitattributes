@@ -1,0 +1,5 @@
+# Packed binary data: never touch line endings.
+*.fwr binary
+*.pmtiles binary
+*.pbf binary
+*.png binary
