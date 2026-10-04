@@ -1,0 +1,56 @@
+name: Refresh cameras
+
+# Hourly: pull the latest camera locations from DeFlock's published tiles and publish each region's
+# feed to the data bucket. The app revalidates the feed on every load, so changes reach users
+# within the hour. Nothing else (roads, basemap) is touched.
+#
+# Needs these in the repository's Settings > Secrets and variables > Actions:
+#   secrets:   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
+#   variables: R2_BUCKET
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-cameras
+  cancel-in-progress: false
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: auto
+  # R2 predates the newer default checksum headers of recent AWS tooling; only send them when required.
+  AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+  AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+  R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+  R2_BUCKET: ${{ vars.R2_BUCKET }}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # The refresh refuses to replace a feed with one less than half its size (a DeFlock outage
+      # must never publish an empty map), so it needs the feed that is currently live.
+      - name: Download the live feeds
+        run: aws s3 cp "s3://$R2_BUCKET/cameras" release/cameras --recursive --endpoint-url "$R2_ENDPOINT" || true
+
+      - name: Refresh from DeFlock
+        run: python -m pipeline.refresh_cameras --out release
+
+      - name: Publish
+        run: >
+          aws s3 cp release/cameras "s3://$R2_BUCKET/cameras" --recursive
+          --endpoint-url "$R2_ENDPOINT"
+          --content-type application/json
+          --cache-control "public, max-age=0, must-revalidate"
