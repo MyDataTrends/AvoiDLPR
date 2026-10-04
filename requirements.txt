@@ -1,0 +1,9 @@
+# Python tooling: the data pipeline (pipeline/), its tests, and the routing spike's tests.
+# Install into a virtualenv: python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
+numpy>=2.0
+scipy>=1.13
+osmium>=4.0        # pyosmium: reads OpenStreetMap extracts
+shapely>=2.0       # spike tests cross-check the zone geometry against it
+pandas>=2.2        # spike/routing/experiment.py only
+matplotlib>=3.9    # spike/routing/experiment.py only
+pytest>=8.0

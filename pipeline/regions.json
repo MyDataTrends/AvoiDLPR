@@ -1,0 +1,11 @@
+{
+  "regions": [
+    {
+      "id": "dallas",
+      "name": "Dallas",
+      "clip_bbox": [-97.05, 32.63, -96.53, 32.94],
+      "geofabrik": "north-america/us/texas",
+      "example": { "from": [-96.85692, 32.73077], "to": [-96.66394, 32.85072] }
+    }
+  ]
+}

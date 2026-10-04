@@ -12,3 +12,6 @@ data/
 tools/
 apps/web/dist/
 .certs/
+apps/web/dist-*/
+release/
+work/

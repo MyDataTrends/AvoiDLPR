@@ -2,8 +2,9 @@
 
 Usage: python -m pipeline.build_pack <extract.osm.pbf> <out.fwr> [--regions spike/regions]
 
-Writes <out>.fwr plus <out>.cameras.json: the DeFlock records (same schema as the CDN's
-region tiles) inside the pack's bounding box.
+Writes <out>.fwr. With --regions it also writes <out>.cameras.json: the DeFlock records (same
+schema as the CDN's region tiles) inside the pack's bounding box, a local camera feed for tests
+and benchmarks.
 """
 
 from __future__ import annotations
@@ -37,8 +38,10 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("extract", type=Path)
     ap.add_argument("out", type=Path)
-    ap.add_argument("--regions", type=Path, default=ROOT / "spike" / "regions",
-                    help="directory of DeFlock region tiles (JSON arrays)")
+    ap.add_argument("--regions", type=Path, default=None,
+                    help="also write <out>.cameras.json (a local camera feed for tests and benchmarks) "
+                         "from this directory of DeFlock region tiles. Production feeds come from "
+                         "`python -m pipeline.refresh_cameras` instead")
     args = ap.parse_args(argv)
 
     t0 = time.perf_counter()
@@ -50,11 +53,12 @@ def main(argv: list[str] | None = None) -> None:
     print(f"{args.out}: {size / 1e6:.1f} MB  {json.dumps(meta['counts'])}  [{time.perf_counter() - t0:.1f}s]")
     print(f"  {json.dumps(graph.stats)}")
 
-    cameras = cameras_in_bbox(args.regions, meta["bbox"])
-    cam_path = args.out.with_suffix(".cameras.json")
-    cam_path.write_text(json.dumps({"source": "DeFlock region tiles (OpenStreetMap, ODbL)",
-                                    "built_at": built_at, "bbox": meta["bbox"], "cameras": cameras}))
-    print(f"{cam_path}: {len(cameras)} cameras")
+    if args.regions:
+        cameras = cameras_in_bbox(args.regions, meta["bbox"])
+        cam_path = args.out.with_suffix(".cameras.json")
+        cam_path.write_text(json.dumps({"source": "DeFlock region tiles (OpenStreetMap, ODbL)",
+                                        "built_at": built_at, "bbox": meta["bbox"], "cameras": cameras}))
+        print(f"{cam_path}: {len(cameras)} cameras")
 
 
 if __name__ == "__main__":

@@ -83,6 +83,18 @@ def write_pack(path: Path, meta: dict, sections: dict[str, np.ndarray]) -> int:
     return 12 + len(header) + offset
 
 
+def read_header(path: Path) -> dict:
+    """Just the JSON header of a pack (metadata and section table), without loading the data."""
+    with open(path, "rb") as f:
+        head = f.read(12)
+        if head[:4] != MAGIC:
+            raise ValueError(f"{path}: not a road pack")
+        version, hlen = (int(v) for v in np.frombuffer(head[4:12], "<u4"))
+        if version != VERSION:
+            raise ValueError(f"{path}: pack version {version}, expected {VERSION}")
+        return json.loads(f.read(hlen))
+
+
 def read_pack(path: Path) -> tuple[dict, dict[str, np.ndarray]]:
     raw = Path(path).read_bytes()
     if raw[:4] != MAGIC:
