@@ -32,21 +32,27 @@ const EMPTY: FeatureCollection = { type: "FeatureCollection", features: [] };
 const CAMERA_LAYERS = ["fw-cameras", "fw-cameras-any"];
 let protocolRegistered = false;
 
-export function createMap(container: HTMLElement, bbox: [number, number, number, number]): MapLibreMap {
+/** Absolute URLs of the basemap's pieces (see data.ts): the tile archive, label fonts and icon sprites. */
+export interface BasemapUrls {
+  pmtiles: string;
+  glyphs: string;
+  sprite: string;
+}
+
+export function createMap(container: HTMLElement, bbox: [number, number, number, number], urls: BasemapUrls): MapLibreMap {
   if (!protocolRegistered) {
     setWorkerUrl(maplibreWorkerUrl);
     addProtocol("pmtiles", new Protocol().tile);
     protocolRegistered = true;
   }
-  const origin = location.origin;
   const style: StyleSpecification = {
     version: 8,
-    glyphs: `${origin}/basemap/assets/fonts/{fontstack}/{range}.pbf`,
-    sprite: `${origin}/basemap/assets/sprites/v4/light`,
+    glyphs: urls.glyphs,
+    sprite: urls.sprite,
     sources: {
       protomaps: {
         type: "vector",
-        url: `pmtiles://${origin}/basemap/dallas.pmtiles`,
+        url: `pmtiles://${urls.pmtiles}`,
         attribution: '<a href="https://protomaps.com">Protomaps</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · cameras via <a href="https://deflock.org">DeFlock</a>',
       },
     },

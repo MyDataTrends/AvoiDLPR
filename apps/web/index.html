@@ -4,9 +4,17 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#ffffff" />
-    <title>FlockWatch · Dallas</title>
-    <meta name="description" content="Routes around license-plate cameras, computed entirely in your browser." />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3l11 25-11-7-11 7z' fill='%231c64f2'/%3E%3C/svg%3E" />
+    <title>FlockWatch</title>
+    <meta name="description" content="Routes around license-plate cameras, computed entirely on your device." />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <!-- Opened from the home screen, the page runs full-screen like an app. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="FlockWatch" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   </head>
   <body>
     <aside id="panel" data-state="half" aria-label="Trip planner">
@@ -18,9 +26,9 @@
       <div class="sheet-body">
         <header>
           <h1>FlockWatch</h1>
-          <p class="lede">
-            Routes around license-plate cameras in Dallas. Everything is computed in this tab: your start
-            and destination never leave it.
+          <p id="lede" class="lede">
+            Routes around license-plate cameras. Everything is computed in this tab: your start and
+            destination never leave it.
           </p>
         </header>
 
@@ -71,6 +79,12 @@
           <h2>Camera zones on this route</h2>
           <ol id="alerts" class="alerts"></ol>
           <p id="routeMeta" class="meta"></p>
+        </section>
+
+        <section id="install" class="install" aria-label="Install">
+          <h2>Use it like an app</h2>
+          <p id="installHelp" class="note"></p>
+          <button id="installBtn" type="button" class="quiet" hidden>Install FlockWatch</button>
         </section>
 
         <details class="settings">

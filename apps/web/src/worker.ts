@@ -1,5 +1,5 @@
 // The router lives here, off the main thread: decoding the pack, computing exposure and
-// searching never stall the map. Nothing in this worker talks to anything but this origin.
+// searching never stall the map. The only thing it fetches is the map data it is told to load.
 import { type CameraRecord, type PackMeta, PROFILES, type Route, Router } from "@flockwatch/router";
 
 import type { CameraDTO, ProfileName, Request, Response, RouteDTO } from "./protocol.ts";
@@ -48,8 +48,8 @@ function ready(r: Router): void {
   });
 }
 
-async function fetchOk(url: string): Promise<globalThis.Response> {
-  const res = await fetch(url);
+async function fetchOk(url: string, init?: RequestInit): Promise<globalThis.Response> {
+  const res = await fetch(url, init);
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
   return res;
 }
@@ -61,7 +61,9 @@ scope.onmessage = async (ev) => {
       const t0 = performance.now();
       const [pack, feed] = await Promise.all([
         fetchOk(msg.packUrl).then((r) => r.arrayBuffer()),
-        fetchOk(msg.camerasUrl).then((r) => r.json() as Promise<{ cameras: CameraRecord[] }>),
+        // The pack is content-hashed and cached forever; the camera feed changes hourly, so it is
+        // revalidated on every load (a cheap 304 when nothing changed).
+        fetchOk(msg.camerasUrl, { cache: "no-cache" }).then((r) => r.json() as Promise<{ cameras: CameraRecord[] }>),
       ]);
       records = feed.cameras;
       router = Router.fromBuffer(pack, records, { params: PROFILES[msg.profile as ProfileName] });

@@ -399,6 +399,16 @@ select {
   font-size: 14px;
 }
 
+.install {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.install h2 {
+  margin: 0;
+}
+
 footer {
   display: grid;
   gap: 6px;

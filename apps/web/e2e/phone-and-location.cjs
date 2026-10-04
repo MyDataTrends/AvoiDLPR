@@ -13,18 +13,40 @@ const DALLAS_DOWNTOWN = { latitude: 32.7767, longitude: -96.797, accuracy: 25 };
 const NEW_YORK = { latitude: 40.7128, longitude: -74.006, accuracy: 20 };
 
 const results = [];
+let lastCheck = '(start)';
 function check(name, ok, detail = '') {
+  lastCheck = name;
   results.push({ name, ok });
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  (${detail})` : ''}`);
 }
 
 function watch(page, label, sink) {
-  page.on('console', (m) => { if (m.type() === 'error') sink.errors.push(`${label}: ${m.text()}`); });
+  page.on('console', async (m) => {
+    if (m.type() !== 'error') return;
+    const when = Date.now();
+    const where = m.location();
+    // An Error object logs as just "Error"; pull its name, message and stack out of the page.
+    const detail = await Promise.all(m.args().map((a) => a.evaluate((v) => (v instanceof Error ? `${v.name}: ${v.message} ${String(v.stack).split('\n')[1] ?? ''}` : String(v))).catch(() => '?')));
+    // Navigating away cancels in-flight map requests, and MapLibre logs those as failed fetches.
+    if (when < sink.quietUntil && /failed to fetch|aborted/i.test(`${m.text()} ${detail.join(' ')}`)) return;
+    sink.errors.push(`${label}: ${m.text()} [${detail.join(' | ')}] @ ${where.url}:${where.lineNumber} (after check: ${lastCheck})`);
+  });
   page.on('pageerror', (e) => sink.errors.push(`${label}: ${e.message}`));
+  // Aborted requests are normal (the map cancels tiles it no longer needs); anything else is news.
+  page.on('requestfailed', (r) => {
+    const reason = r.failure()?.errorText ?? '';
+    if (!/ERR_ABORTED/.test(reason)) sink.errors.push(`${label}: request failed ${r.method()} ${r.url().slice(0, 120)} ${reason} range=${r.headers().range ?? '-'} (after check: ${lastCheck})`);
+  });
   page.on('request', (r) => {
     const u = r.url();
     if (!u.startsWith('http://localhost:5173') && !u.startsWith('data:') && !u.startsWith('blob:')) sink.external.push(u);
   });
+}
+
+/** Navigate, ignoring the cancelled-request noise from the page being torn down. */
+async function open(page, sink, url) {
+  sink.quietUntil = Date.now() + 3000;
+  await page.goto(url);
 }
 
 async function ready(page) {
@@ -66,7 +88,7 @@ async function drag(page, selector, dy) {
 }
 
 (async () => {
-  const sink = { errors: [], external: [] };
+  const sink = { errors: [], external: [], quietUntil: 0 };
   const browser = await chromium.launch({ headless: true, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   try {
     // ---------- phone, with a GPS fix in downtown Dallas ----------
@@ -189,11 +211,12 @@ async function drag(page, selector, dy) {
       (await page.locator('#drive').innerText()) === 'Preview drive' && (await page.locator('#banner').isHidden()));
 
     // ---------- current location ----------
-    await page.goto(URL);
+    await open(page, sink, URL);
     await ready(page);
     await page.locator('#mapLocate').tap();
-    await page.getByText('Your location').first().waitFor({ timeout: 15_000 });
-    check('gps: start becomes "Your location" with its accuracy', /Your location Â· Â±25 m/.test(await page.locator('#fromText').innerText()));
+    // Wait on the start field itself: the "Finding your location…" notice also contains the words.
+    await page.locator('#fromText', { hasText: 'Your location' }).waitFor({ timeout: 15_000 });
+    check('gps: start becomes "Your location" with its accuracy', /Your location · ±25 m/.test(await page.locator('#fromText').innerText()));
     check('gps: a location dot is drawn', (await page.locator('.gps-dot').count()) === 1);
     check('gps: the location is not written to the URL', !/from/.test(await page.evaluate(() => location.hash)), await page.evaluate(() => location.hash));
     check('gps: next tap targets the destination', (await page.locator('#targetTo').getAttribute('aria-pressed')) === 'true');

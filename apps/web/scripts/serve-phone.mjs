@@ -28,11 +28,9 @@ const port = Number(arg("--port") ?? 4173);
 
 // ---------- data ----------
 
-for (const f of ["data/packs/dallas.fwr", "data/packs/dallas.cameras.json", "data/basemap/dallas.pmtiles"]) {
-  if (!existsSync(join(ROOT, f))) {
-    console.error(`Missing ${f}. Build the road pack and run \`npm run fetch-basemap -w @flockwatch/web\` first (see the README).`);
-    process.exit(1);
-  }
+if (!existsSync(join(ROOT, "release", "regions.json"))) {
+  console.error("There's no staged release yet (release/regions.json). Build the data and run `python -m pipeline.release` first; see the README.");
+  process.exit(1);
 }
 
 // ---------- addresses ----------

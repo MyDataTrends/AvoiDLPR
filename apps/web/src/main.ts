@@ -4,6 +4,7 @@ import "./style.css";
 import { LocalProjection } from "@flockwatch/router";
 import { type LngLat, LngLatBounds, Marker, Popup } from "maplibre-gl";
 
+import { dataUrl, loadManifest, pickRegion } from "./data.ts";
 import { type Fix, Polyline } from "./drive.ts";
 import { cameraZones, distance, duration, extraTime, gapTime, siteTitle, watches } from "./format.ts";
 import { insideBox, LocateError, locate } from "./location.ts";
@@ -11,9 +12,6 @@ import { type CameraState, createMap, Overlays } from "./map.ts";
 import type { CameraDTO, LonLat, ProfileName, Request, Response, RouteDTO, SiteDTO, Stats } from "./protocol.ts";
 import { Sheet } from "./sheet.ts";
 
-/** The spike's showcase trip: west Dallas to the northeast. */
-const EXAMPLE: { from: LonLat; to: LonLat } = { from: [-96.85692, 32.73077], to: [-96.66394, 32.85072] };
-const DALLAS: [number, number, number, number] = [-97.09, 32.608, -96.518, 32.951];
 const PROFILE_NAMES: ProfileName[] = ["strict", "default", "loose"];
 const ALERT_AHEAD_M = 400;
 /** A zone takes ~5 s to cross at city speed but a blink at 32x playback: keep the alert up. */
@@ -24,6 +22,26 @@ const ROUTE_TAP_SLOP_PX = 12;
 const MAX_EXTRA_PERCENT = 50;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
+
+// ---------- boot: what data exists, and which region to show ----------
+
+function showBootFailure(err: unknown): never {
+  const message = err instanceof Error ? err.message : String(err);
+  const text = `FlockWatch couldn't load its map data. ${message}`;
+  $("summary").textContent = "Couldn't load map data";
+  $("status").textContent = text;
+  $("notice").textContent = text;
+  $("notice").hidden = false;
+  throw err;
+}
+
+const manifest = await loadManifest().catch(showBootFailure);
+const region = pickRegion(manifest, new URLSearchParams(location.hash.slice(1)).get("r"));
+/** Names of every region covered, for messages ("Dallas and Austin"). */
+const coveredAreas = new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(manifest.regions.map((r) => r.name));
+document.title = `FlockWatch · ${region.name}`;
+$("lede").textContent = `Routes around license-plate cameras in ${region.name}. Everything is computed in this tab: your start and destination never leave it.`;
+$("example").hidden = !region.example;
 
 type Stop = "from" | "to";
 
@@ -70,8 +88,25 @@ const state = {
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
 const send = (msg: Request) => worker.postMessage(msg);
-const map = createMap($("mapwrap").querySelector("#map")!, DALLAS);
+const map = createMap($("mapwrap").querySelector("#map")!, region.bbox, {
+  pmtiles: dataUrl(region.basemap.path),
+  glyphs: dataUrl(manifest.assets.glyphs),
+  sprite: dataUrl(manifest.assets.sprite),
+});
 let overlays: Overlays | null = null;
+// When the camera moves on, MapLibre cancels the tile requests it no longer needs, and some browsers
+// report a cancelled fetch as "Failed to fetch". Those aren't failures: ignore errors that arrive
+// while the map is moving or just after it stopped, and report everything else.
+let lastMoveMs = 0;
+map.on("movestart", () => void (lastMoveMs = Infinity));
+map.on("moveend", () => void (lastMoveMs = performance.now()));
+map.on("error", (e) => {
+  const error = e.error as Error | undefined;
+  const cancelled = error?.name === "AbortError" || /failed to fetch|aborted/i.test(error?.message ?? "");
+  if (cancelled && (lastMoveMs === Infinity || performance.now() - lastMoveMs < 2000)) return;
+  console.error(error ?? e);
+});
+
 /** Height of the bottom sheet in pixels once settled (0 when the panel is a sidebar). */
 let sheetPx = 0;
 const sheet = new Sheet($("panel"), $("sheetHead"), $("handle"), (px) => {
@@ -494,7 +529,7 @@ async function useMyLocation(): Promise<void> {
   try {
     const fix = await locate();
     if (state.stats && !insideBox(state.stats.bbox, fix.lon, fix.lat)) {
-      state.notice = "You're outside the area FlockWatch has loaded (Dallas–Fort Worth). Tap the map to pick a start inside it.";
+      state.notice = `You're outside the area FlockWatch covers (${coveredAreas}). Tap the map to pick a start inside it.`;
       render();
       return;
     }
@@ -544,6 +579,7 @@ function writeHash(): void {
   if (state.from && !state.fromGps) p.set("from", state.from.map((v) => v.toFixed(5)).join(","));
   if (state.to) p.set("to", state.to.map((v) => v.toFixed(5)).join(","));
   if (state.profile !== "default") p.set("model", state.profile);
+  if (manifest.regions.length > 1) p.set("r", region.id);
   history.replaceState(null, "", p.size ? `#${p}` : location.pathname + location.search);
 }
 
@@ -608,13 +644,51 @@ $("mapLocate").addEventListener("click", () => void useMyLocation());
 $("swap").addEventListener("click", () => {
   if (state.from || state.to) setStops({ from: state.to, to: state.from });
 });
-$("example").addEventListener("click", () => setStops({ from: EXAMPLE.from, to: EXAMPLE.to }));
+$("example").addEventListener("click", () => {
+  if (region.example) setStops({ from: region.example.from, to: region.example.to });
+});
 $("clear").addEventListener("click", () => {
   setStops({ from: null, to: null });
   state.fitNext = false;
 });
 $("drive").addEventListener("click", () => (state.drive ? stopDrive() : startDrive()));
 
+// ---------- install to the home screen ----------
+
+type InstallPromptEvent = Event & { prompt(): Promise<void> };
+let installPrompt: InstallPromptEvent | null = null;
+const installed = matchMedia("(display-mode: standalone)").matches || (navigator as { standalone?: boolean }).standalone === true;
+$("install").hidden = installed;
+$("installHelp").textContent = /iphone|ipad|ipod/i.test(navigator.userAgent)
+  ? "In Safari, tap the Share button, then Add to Home Screen."
+  : "Use your browser's menu and choose Install app (or Add to Home screen).";
+// Chrome and Edge on Android offer a real install button instead.
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  installPrompt = e as InstallPromptEvent;
+  $("installBtn").hidden = false;
+});
+$("installBtn").addEventListener("click", async () => {
+  await installPrompt?.prompt();
+  installPrompt = null;
+  $("installBtn").hidden = true;
+});
+window.addEventListener("appinstalled", () => void ($("install").hidden = true));
+
+// ---------- offline and instant start ----------
+
+if (import.meta.env.PROD && "serviceWorker" in navigator && window.isSecureContext) {
+  // When a new version takes over, reload once so this tab doesn't keep running files the new
+  // service worker has retired. (The first install isn't a takeover: there's nothing stale.)
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (hadController) location.reload();
+  });
+  navigator.serviceWorker.register("/sw.js").catch(() => {
+    /* No service worker (e.g. an untrusted certificate): the app still works, just without offline. */
+  });
+}
+
 readHash();
-send({ type: "load", packUrl: "/packs/dallas.fwr", camerasUrl: "/packs/dallas.cameras.json", profile: state.profile });
+send({ type: "load", packUrl: dataUrl(region.pack.path), camerasUrl: dataUrl(region.cameras.path), profile: state.profile });
 render();
