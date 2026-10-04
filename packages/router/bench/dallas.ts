@@ -74,6 +74,29 @@ for (const maxExtra of [0.05, 0.1, 0.2]) {
     + `${fmt(100 * mean(chosen.map((r) => +(r.sites.length === 0))), 0).padStart(10)}%  ${fmt(100 * mean(extra)).padStart(8)}%`);
 }
 
+{
+  const times: number[] = [], probes: number[] = [], counts: number[] = [], rec: number[] = [], budget: number[] = [];
+  const histogram = new Map<number, number>();
+  let worse = 0;
+  for (const [a, b] of ends) {
+    const t0 = performance.now();
+    const alt = router.routeAlternatives(a, b)!;
+    times.push(ms(t0));
+    probes.push(alt.probes);
+    counts.push(alt.routes.length);
+    histogram.set(alt.routes.length, (histogram.get(alt.routes.length) ?? 0) + 1);
+    rec.push(alt.routes[alt.recommended].sites.length);
+    const best = router.routeWithinBudget(a, b, { maxExtra: 0.1 })!.chosen.sites.length;
+    budget.push(best);
+    if (alt.routes[alt.recommended].sites.length > best) worse++;
+  }
+  console.log(`\nalternatives: query ms p50 ${fmt(pct(times, 0.5))} / p90 ${fmt(pct(times, 0.9))}, `
+    + `${fmt(mean(probes))} searches on average; options per trip: `
+    + [...histogram].sort((x, y) => x[0] - y[0]).map(([n, c]) => `${n}: ${c}`).join(", "));
+  console.log(`  recommended option: ${fmt(mean(rec), 2)} sites per trip vs ${fmt(mean(budget), 2)} for routeWithinBudget(+10%); `
+    + `worse on ${worse} of ${ends.length} trips`);
+}
+
 const dij: number[] = [], ast: number[] = [];
 for (const [a, b] of ends.slice(0, 50)) {
   let t0 = performance.now();

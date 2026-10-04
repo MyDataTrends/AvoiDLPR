@@ -7,5 +7,7 @@ export {
 } from "./geo.ts";
 export { SegmentGrid } from "./grid.ts";
 export { decodePack, type PackMeta, type RoadPack } from "./pack.ts";
-export { type BudgetRoute, type Route, Router, type RouterOptions, type RouteSite } from "./router.ts";
+export {
+  type AlternativeRoutes, type BudgetRoute, type Route, Router, type RouterOptions, type RouteSite,
+} from "./router.ts";
 export { EdgeSearch, type Endpoint, NODE_EPS_M, nodeAt, type SearchPath, TURN_COST_S, turnCost } from "./search.ts";

@@ -12,15 +12,19 @@ const scope = self as unknown as {
 let router: Router | null = null;
 let records: CameraRecord[] = [];
 let loaded: { packMB: number; loadMs: number } = { packMB: 0, loadMs: 0 };
+/** Camera DTOs and their site grouping, rebuilt whenever the router's cameras change. */
+let cams: CameraDTO[] = [];
+let siteIndex = new Map<number, number[]>();
 
-function cameras(r: Router): CameraDTO[] {
-  return r.cameras.cameras.map((c, i) => ({
+function refreshCameras(r: Router): void {
+  cams = r.cameras.cameras.map((c, i) => ({
     osmId: c.osmId, lon: c.lon, lat: c.lat, brand: c.brand, mode: c.mode,
     sectors: c.sectors.map(([b, h]) => [b, h] as [number, number]), site: r.cameras.siteOf[i],
   }));
+  siteIndex = new Map(r.cameras.siteCameras.map((m, s) => [s, m]));
 }
 
-function toDTO(r: Route, cams: CameraDTO[], siteIndex: Map<number, number[]>): RouteDTO {
+function toDTO(r: Route): RouteDTO {
   return {
     timeS: r.timeS, distanceM: r.distanceM, turns: r.turns, coordinates: r.coordinates,
     sites: r.sites.map((s) => ({
@@ -31,7 +35,7 @@ function toDTO(r: Route, cams: CameraDTO[], siteIndex: Map<number, number[]>): R
 
 function ready(r: Router): void {
   const meta: PackMeta = r.pack.meta;
-  const cams = cameras(r);
+  refreshCameras(r);
   scope.postMessage({
     type: "ready",
     cameras: cams,
@@ -73,21 +77,21 @@ scope.onmessage = async (ev) => {
       const a = router.snap(msg.from[0], msg.from[1]);
       const b = router.snap(msg.to[0], msg.to[1]);
       if (!a || !b) {
-        scope.postMessage({ type: "noroute", id: msg.id, reason: `No road within 250 m of the ${a ? "destination" : "start"}.` });
+        scope.postMessage({
+          type: "noroute", id: msg.id,
+          reason: `There's no road within 250 m of the ${a ? "destination" : "start"}. Try a spot closer to a street.`,
+        });
         return;
       }
       const t0 = performance.now();
-      const res = router.routeWithinBudget(a, b, { maxExtra: msg.maxExtra });
+      const res = router.routeAlternatives(a, b);
       const ms = performance.now() - t0;
       if (!res) {
         scope.postMessage({ type: "noroute", id: msg.id, reason: "No drivable route between these points." });
         return;
       }
-      const cams = cameras(router);
-      const siteIndex = new Map(router.cameras.siteCameras.map((m, s) => [s, m]));
       scope.postMessage({
-        type: "route", id: msg.id, ms, lambda: res.lambda, probes: res.probes, sameRoute: res.chosen === res.fastest,
-        fastest: toDTO(res.fastest, cams, siteIndex), chosen: toDTO(res.chosen, cams, siteIndex),
+        type: "route", id: msg.id, ms, probes: res.probes, recommended: res.recommended, routes: res.routes.map(toDTO),
       });
     } else if (msg.type === "capturing") {
       scope.postMessage({ type: "capturing", id: msg.id, sites: router.sitesCapturingAt(msg.lon, msg.lat, msg.heading) });

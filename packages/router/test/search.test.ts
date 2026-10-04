@@ -85,6 +85,27 @@ describe("avoiding cameras", () => {
     near(loose.chosen.timeS, 162);
   });
 
+  it("offers the fastest route and the camera-free detour, and recommends by extra time", () => {
+    const a = at(flock, 1), b = at(flock, 21);
+    const alt = flock.routeAlternatives(a, b, { maxExtra: 1 })!; // the detour is +69%
+    assert.deepEqual(alt.routes.map((r) => r.sites.length), [1, 0]);
+    near(alt.routes[0].timeS, 96);
+    near(alt.routes[1].timeS, 162);
+    assert.equal(alt.recommended, 0); // beyond the default +10% recommendation window
+    assert.equal(flock.routeAlternatives(a, b, { maxExtra: 1, recommendedExtra: 1 })!.recommended, 1);
+  });
+
+  it("leaves out options slower than the cap", () => {
+    const alt = flock.routeAlternatives(at(flock, 1), at(flock, 21))!; // default cap +50%
+    assert.deepEqual(alt.routes.map((r) => r.sites.length), [1]);
+  });
+
+  it("offers a single route when the fastest already passes no cameras", () => {
+    const alt = flock.routeAlternatives(at(flock, 21), at(flock, 1))!; // southbound: unseen
+    assert.equal(alt.routes.length, 1);
+    assert.equal(alt.recommended, 0);
+  });
+
   it("answers the live question: is this car in a zone right now?", () => {
     const [lon, lat] = between(6, 11, 20);
     assert.deepEqual(flock.sitesCapturingAt(lon, lat, 0), [0]);

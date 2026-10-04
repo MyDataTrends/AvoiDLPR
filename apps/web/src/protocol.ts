@@ -48,13 +48,13 @@ export interface Stats {
 export type Request =
   | { type: "load"; packUrl: string; camerasUrl: string; profile: ProfileName }
   | { type: "profile"; profile: ProfileName }
-  | { type: "route"; id: number; from: LonLat; to: LonLat; maxExtra: number }
+  | { type: "route"; id: number; from: LonLat; to: LonLat }
   | { type: "capturing"; id: number; lon: number; lat: number; heading: number };
 
 export type Response =
   | { type: "ready"; stats: Stats; cameras: CameraDTO[]; zone: ZoneParams }
-  | { type: "route"; id: number; fastest: RouteDTO; chosen: RouteDTO; sameRoute: boolean; lambda: number;
-    probes: number; ms: number }
+  /** `routes` run fastest first, each with strictly fewer camera zones than the last. */
+  | { type: "route"; id: number; routes: RouteDTO[]; recommended: number; probes: number; ms: number }
   | { type: "noroute"; id: number; reason: string }
   | { type: "capturing"; id: number; sites: number[] }
   | { type: "error"; message: string };

@@ -20,6 +20,22 @@ export function signedPercent(x: number): string {
   return `${p >= 0 ? "+" : "−"}${Math.abs(p)}%`;
 }
 
+/** "+3 min" for a route this much slower than the fastest; "+<1 min" when it's under 30 s. */
+export function extraTime(extraS: number): string {
+  const m = Math.round(extraS / 60);
+  return m >= 1 ? `+${m} min` : "+<1 min";
+}
+
+/** "3 min" for a gap in time, or "under a minute". */
+export function gapTime(s: number): string {
+  const m = Math.round(s / 60);
+  return m >= 1 ? `${m} min` : "under a minute";
+}
+
+export function cameraZones(n: number): string {
+  return `${n} camera zone${n === 1 ? "" : "s"}`;
+}
+
 /** What a camera watches, in words: Flock reads rear plates of one travel direction. */
 export function watches(c: CameraDTO): string {
   if (c.mode === "any") return "direction unknown";

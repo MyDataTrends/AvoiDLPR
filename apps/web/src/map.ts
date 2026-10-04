@@ -1,9 +1,10 @@
 // Map setup: a self-hosted Protomaps basemap (tiles, fonts and icons all from this origin)
-// plus overlays for routes, cameras, capture zones and the simulated car.
+// plus overlays for routes, cameras, capture zones, the GPS accuracy circle and the car.
 import { layers, namedFlavor } from "@protomaps/basemaps";
 import type { Feature, FeatureCollection, Point } from "geojson";
 import {
-  addProtocol, type GeoJSONSource, Map as MapLibreMap, type PointLike, setWorkerUrl, type StyleSpecification,
+  addProtocol, type GeoJSONSource, type LineLayerSpecification, Map as MapLibreMap, type PointLike, setWorkerUrl,
+  type StyleSpecification,
 } from "maplibre-gl";
 // MapLibre locates its tile worker relative to its own module URL, which bundlers relocate;
 // let Vite build the worker and hand MapLibre the result.
@@ -11,16 +12,21 @@ import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&ur
 import { Protocol } from "pmtiles";
 
 import type { Fix } from "./drive.ts";
-import type { CameraDTO, RouteDTO } from "./protocol.ts";
+import type { CameraDTO } from "./protocol.ts";
 
 export const COLORS = {
-  fastest: "#d9480f",
-  chosen: "#1c64f2",
-  both: "#7048e8",
   camera: "#495057",
+  /** A camera on the selected route. */
+  route: "#e03131",
+  /** A camera on the fastest route that the selected route avoids. */
+  avoided: "#2f9e44",
   zone: "#e03131",
   car: "#212529",
+  gps: "#1c64f2",
 } as const;
+
+/** Where a camera stands relative to the selected route. */
+export type CameraState = "route" | "avoided" | "";
 
 const EMPTY: FeatureCollection = { type: "FeatureCollection", features: [] };
 const CAMERA_LAYERS = ["fw-cameras", "fw-cameras-any"];
@@ -91,46 +97,62 @@ function sector(lon: number, lat: number, bearing: number, halfAngle: number, ra
   return ring;
 }
 
+export interface RouteLine {
+  coordinates: [number, number][];
+  color: string;
+  selected: boolean;
+  /** Index into the route list, so a tap on the line can select it. */
+  index: number;
+}
+
 export class Overlays {
   private readonly map: MapLibreMap;
 
   constructor(map: MapLibreMap) {
     this.map = map;
-    for (const [name, color] of [["fw-cam", COLORS.camera], ["fw-cam-fastest", COLORS.fastest],
-      ["fw-cam-chosen", COLORS.chosen], ["fw-cam-both", COLORS.both], ["fw-car", COLORS.car]] as const) {
+    for (const [name, color] of [["fw-cam", COLORS.camera], ["fw-cam-route", COLORS.route],
+      ["fw-cam-avoided", COLORS.avoided], ["fw-car", COLORS.car]] as const) {
       map.addImage(name, arrow(color), { pixelRatio: 2 });
     }
-    for (const id of ["fw-zones", "fw-routes", "fw-cameras", "fw-car"]) map.addSource(id, { type: "geojson", data: EMPTY });
+    for (const id of ["fw-accuracy", "fw-zones", "fw-routes", "fw-cameras", "fw-car"]) {
+      map.addSource(id, { type: "geojson", data: EMPTY });
+    }
 
+    map.addLayer({
+      id: "fw-accuracy", type: "fill", source: "fw-accuracy",
+      paint: { "fill-color": COLORS.gps, "fill-opacity": 0.12, "fill-outline-color": COLORS.gps },
+    });
     map.addLayer({
       id: "fw-zones", type: "fill", source: "fw-zones", minzoom: 13,
       paint: { "fill-color": COLORS.zone, "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.08, 16, 0.2] },
     });
+    // Selected routes draw last (on top); `order` is 1 for them, 0 for the rest.
+    const layout: LineLayerSpecification["layout"] = {
+      "line-join": "round", "line-cap": "round", "line-sort-key": ["get", "order"],
+    };
     map.addLayer({
-      id: "fw-routes-casing", type: "line", source: "fw-routes",
-      layout: { "line-join": "round", "line-cap": "round", "line-sort-key": ["get", "order"] },
+      id: "fw-routes-casing", type: "line", source: "fw-routes", layout,
       paint: {
         "line-color": "#ffffff",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 6, 16, 13],
+        "line-width": ["interpolate", ["linear"], ["zoom"], 10, ["case", ["get", "selected"], 7, 5], 16,
+          ["case", ["get", "selected"], 14, 10]],
         "line-opacity": ["case", ["get", "selected"], 1, 0.7],
       },
     });
     map.addLayer({
-      id: "fw-routes", type: "line", source: "fw-routes",
-      layout: { "line-join": "round", "line-cap": "round", "line-sort-key": ["get", "order"] },
+      id: "fw-routes", type: "line", source: "fw-routes", layout,
       paint: {
-        "line-color": ["match", ["get", "kind"], "fastest", COLORS.fastest, "chosen", COLORS.chosen, COLORS.both],
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, ["case", ["get", "selected"], 4, 3], 16,
+        "line-color": ["get", "color"],
+        "line-width": ["interpolate", ["linear"], ["zoom"], 10, ["case", ["get", "selected"], 4.5, 3], 16,
           ["case", ["get", "selected"], 8, 6]],
-        "line-opacity": ["case", ["get", "selected"], 0.95, 0.5],
+        "line-opacity": ["case", ["get", "selected"], 0.95, 0.55],
       },
     });
     map.addLayer({
       id: "fw-cameras-any", type: "circle", source: "fw-cameras", filter: ["==", ["get", "mode"], "any"],
       paint: {
         "circle-radius": ["interpolate", ["linear"], ["zoom"], 9, 1.5, 13, 3, 16, 6],
-        "circle-color": ["match", ["get", "on"], "fastest", COLORS.fastest, "chosen", COLORS.chosen, "both",
-          COLORS.both, COLORS.camera],
+        "circle-color": ["match", ["get", "on"], "route", COLORS.route, "avoided", COLORS.avoided, COLORS.camera],
         "circle-stroke-color": "#ffffff",
         "circle-stroke-width": 1.5,
       },
@@ -138,13 +160,12 @@ export class Overlays {
     map.addLayer({
       id: "fw-cameras", type: "symbol", source: "fw-cameras", filter: ["!=", ["get", "mode"], "any"],
       layout: {
-        "icon-image": ["match", ["get", "on"], "fastest", "fw-cam-fastest", "chosen", "fw-cam-chosen", "both",
-          "fw-cam-both", "fw-cam"],
+        "icon-image": ["match", ["get", "on"], "route", "fw-cam-route", "avoided", "fw-cam-avoided", "fw-cam"],
         "icon-rotate": ["get", "bearing"],
         "icon-rotation-alignment": "map",
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
-        // Small at city scale so routes stay readable; cameras on a route draw larger.
+        // Small at city scale so routes stay readable; cameras that matter draw larger.
         "icon-size": ["interpolate", ["linear"], ["zoom"],
           9, ["case", ["==", ["get", "on"], ""], 0.22, 0.45],
           13, ["case", ["==", ["get", "on"], ""], 0.5, 0.75],
@@ -164,15 +185,12 @@ export class Overlays {
     });
   }
 
-  setCameras(cameras: readonly CameraDTO[], zone: { rangeM: number }, onFastest: Set<number>,
-    onChosen: Set<number>): void {
-    const on = (site: number) =>
-      onFastest.has(site) && onChosen.has(site) ? "both" : onFastest.has(site) ? "fastest" : onChosen.has(site) ? "chosen" : "";
+  setCameras(cameras: readonly CameraDTO[], zone: { rangeM: number }, stateOf: (site: number) => CameraState): void {
     const points: Feature<Point>[] = [];
     const zones: Feature[] = [];
     cameras.forEach((c, index) => {
       for (const [bearing, halfAngle] of c.sectors) {
-        const properties = { index, site: c.site, mode: c.mode, bearing, on: on(c.site) };
+        const properties = { index, site: c.site, mode: c.mode, bearing, on: stateOf(c.site) };
         points.push({ type: "Feature", geometry: { type: "Point", coordinates: [c.lon, c.lat] }, properties });
         zones.push({
           type: "Feature", properties,
@@ -184,18 +202,24 @@ export class Overlays {
     this.source("fw-zones").setData({ type: "FeatureCollection", features: zones });
   }
 
-  setRoutes(fastest: RouteDTO | null, chosen: RouteDTO | null, same: boolean, selected: "fastest" | "chosen"): void {
-    const line = (r: RouteDTO, kind: string, isSelected: boolean): Feature => ({
-      type: "Feature", properties: { kind, selected: isSelected, order: isSelected ? 1 : 0 },
-      geometry: { type: "LineString", coordinates: r.coordinates },
+  /** Draw the route options; the selected one sits on top, the rest stay tappable behind it. */
+  setRoutes(lines: readonly RouteLine[]): void {
+    this.source("fw-routes").setData({
+      type: "FeatureCollection",
+      features: lines.map((l): Feature => ({
+        type: "Feature",
+        properties: { color: l.color, selected: l.selected, order: l.selected ? 1 : 0, index: l.index },
+        geometry: { type: "LineString", coordinates: l.coordinates },
+      })),
     });
-    const features: Feature[] = [];
-    if (fastest && chosen && same) features.push(line(chosen, "both", true));
-    else {
-      if (fastest) features.push(line(fastest, "fastest", selected === "fastest"));
-      if (chosen) features.push(line(chosen, "chosen", selected === "chosen"));
-    }
-    this.source("fw-routes").setData({ type: "FeatureCollection", features });
+  }
+
+  /** Circle of `accuracyM` metres round a GPS fix, or nothing. */
+  setAccuracy(fix: { lon: number; lat: number; accuracyM: number } | null): void {
+    this.source("fw-accuracy").setData(fix
+      ? { type: "FeatureCollection", features: [{ type: "Feature", properties: {},
+        geometry: { type: "Polygon", coordinates: [sector(fix.lon, fix.lat, 0, 180, fix.accuracyM)] } }] }
+      : EMPTY);
   }
 
   setCar(fix: Fix | null): void {

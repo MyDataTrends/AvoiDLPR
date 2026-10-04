@@ -50,6 +50,42 @@ export interface BudgetRoute {
   probes: number;
 }
 
+export interface AlternativeRoutes {
+  /** Fastest first; each passes strictly fewer capture sites than the one before. */
+  routes: Route[];
+  /** Index of the fewest-site route within the recommended extra time. */
+  recommended: number;
+  /** Searches run, the fastest included. */
+  probes: number;
+}
+
+/** Camera prices (seconds of driving per avoided capture) the alternatives sweep tries. */
+const ALTERNATIVE_LAMBDAS = [10, 30, 60, 120, 300, 900, 3000] as const;
+
+/**
+ * Choose at most `max` indices of a Pareto-ordered frontier: the first, the last and `must`
+ * are kept, and the rest are added greedily, each the point farthest (in time and sites,
+ * both normalised) from those already kept.
+ */
+function spreadOut(frontier: readonly Route[], max: number, must: number): number[] {
+  if (frontier.length <= max) return frontier.map((_, i) => i);
+  const t0 = frontier[0].timeS, dt = (frontier[frontier.length - 1].timeS - t0) || 1;
+  const s0 = frontier[0].sites.length, ds = (s0 - frontier[frontier.length - 1].sites.length) || 1;
+  const at = (i: number): [number, number] => [(frontier[i].timeS - t0) / dt, (s0 - frontier[i].sites.length) / ds];
+  const kept = new Set([0, frontier.length - 1, must]);
+  while (kept.size < max) {
+    let best = -1, bestGap = -1;
+    for (let i = 0; i < frontier.length; i++) {
+      if (kept.has(i)) continue;
+      const [x, y] = at(i);
+      const gap = Math.min(...[...kept].map((k) => Math.hypot(x - at(k)[0], y - at(k)[1])));
+      if (gap > bestGap) [best, bestGap] = [i, gap];
+    }
+    kept.add(best);
+  }
+  return [...kept].sort((a, b) => a - b);
+}
+
 export interface RouterOptions {
   params?: ZoneParams;
   /** Ignore heading (every camera sees both directions): for comparison only. */
@@ -138,6 +174,66 @@ export class Router {
       }
     }
     return { fastest, chosen, lambda: chosenLambda, probes: runs };
+  }
+
+  /**
+   * The distinct trade-off options for a trip: routes along its time-vs-cameras frontier,
+   * fastest first, each passing strictly fewer capture sites than the one before and no
+   * more than `maxExtra` slower than the fastest. Found by sweeping the camera price lambda
+   * (route time only rises with it), so every option is optimal for some price. At most
+   * `max` are returned, spread across the frontier; the fastest and the fewest-camera ones
+   * always survive. `recommended` indexes the option with the fewest sites within
+   * `recommendedExtra` of the fastest time.
+   */
+  routeAlternatives(from: Endpoint, to: Endpoint,
+    opts: { maxExtra?: number; recommendedExtra?: number; max?: number; lambdas?: readonly number[] } = {},
+  ): AlternativeRoutes | null {
+    const { maxExtra = 0.5, recommendedExtra = 0.1, max = 4, lambdas = ALTERNATIVE_LAMBDAS } = opts;
+    const fastest = this.route(from, to);
+    if (!fastest) return null;
+    if (fastest.sites.length === 0) return { routes: [fastest], recommended: 0, probes: 1 };
+    const limit = fastest.timeS * (1 + maxExtra) + 1e-9;
+    const recLimit = fastest.timeS * (1 + recommendedExtra) + 1e-9;
+    let probes = 1;
+
+    // Sweep the price. Route time never falls as it rises, so stop once a route is too slow
+    // or capture-free; remember the bracket around the recommendation window.
+    const pool = [fastest];
+    let lo = { lambda: 0, route: fastest }, hi: { lambda: number; route: Route } | null = null;
+    for (const lambda of lambdas) {
+      const r = this.route(from, to, { lambda });
+      probes++;
+      if (!r) continue;
+      if (r.timeS <= recLimit) lo = { lambda, route: r };
+      else if (!hi) hi = { lambda, route: r };
+      if (r.timeS > limit) break;
+      pool.push(r);
+      if (r.sites.length === 0) break; // nothing can beat zero
+    }
+    // The fixed prices can skip the best route inside the recommendation window: bisect the
+    // price within the bracket (geometrically; a price of 0 is the fastest route).
+    if (hi && lo.route.sites.length > 0) {
+      let a = Math.max(lo.lambda, 1);
+      let b = hi.lambda;
+      for (let i = 0; i < 4 && b / a > 1.1; i++) {
+        const mid = Math.sqrt(a * b);
+        const r = this.route(from, to, { lambda: mid });
+        probes++;
+        if (!r) break;
+        if (r.timeS <= limit) pool.push(r);
+        if (r.timeS <= recLimit) a = mid;
+        else b = mid;
+      }
+    }
+
+    // Keep only Pareto-optimal routes: slower must buy strictly fewer capture sites.
+    pool.sort((x, y) => x.timeS - y.timeS || x.sites.length - y.sites.length);
+    const frontier: Route[] = [];
+    for (const r of pool) if (!frontier.length || r.sites.length < frontier[frontier.length - 1].sites.length) frontier.push(r);
+    let pick = 0;
+    for (let i = 1; i < frontier.length; i++) if (frontier[i].timeS <= recLimit) pick = i;
+    const keep = spreadOut(frontier, max, pick);
+    return { routes: keep.map((i) => frontier[i]), recommended: keep.indexOf(pick), probes };
   }
 
   /** Sites whose zone holds a vehicle here on this heading: the live-alert primitive. */

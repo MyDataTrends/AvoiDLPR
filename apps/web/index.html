@@ -2,86 +2,107 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#ffffff" />
     <title>FlockWatch · Dallas</title>
     <meta name="description" content="Routes around license-plate cameras, computed entirely in your browser." />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3l11 25-11-7-11 7z' fill='%231c64f2'/%3E%3C/svg%3E" />
   </head>
   <body>
-    <aside id="panel">
-      <header>
-        <h1>FlockWatch</h1>
-        <p class="lede">
-          Routes around license-plate cameras in Dallas. Everything is computed in this tab: your start and
-          destination never leave it.
-        </p>
-      </header>
+    <aside id="panel" data-state="half" aria-label="Trip planner">
+      <div id="sheetHead" class="sheet-head">
+        <button id="handle" class="handle" type="button" aria-label="Resize panel" aria-expanded="true"><span></span></button>
+        <p id="summary" class="summary"></p>
+      </div>
 
-      <section class="controls" aria-label="Route options">
-        <fieldset>
-          <legend>Extra time you'll accept to avoid cameras</legend>
-          <div class="segmented">
-            <label><input id="budget-0" type="radio" name="budget" value="0" /><span>0%</span></label>
-            <label><input id="budget-5" type="radio" name="budget" value="5" /><span>5%</span></label>
-            <label><input id="budget-10" type="radio" name="budget" value="10" checked /><span>10%</span></label>
-            <label><input id="budget-20" type="radio" name="budget" value="20" /><span>20%</span></label>
-            <label><input id="budget-50" type="radio" name="budget" value="50" /><span>50%</span></label>
+      <div class="sheet-body">
+        <header>
+          <h1>FlockWatch</h1>
+          <p class="lede">
+            Routes around license-plate cameras in Dallas. Everything is computed in this tab: your start
+            and destination never leave it.
+          </p>
+        </header>
+
+        <section class="trip" aria-label="Trip">
+          <div class="stop">
+            <button id="targetFrom" type="button" class="stop-main" aria-pressed="true">
+              <span class="dot from" aria-hidden="true"></span>
+              <span class="stop-label">From</span>
+              <span id="fromText" class="stop-text"></span>
+            </button>
+            <button id="locate" type="button" class="icon-btn" aria-label="Use my current location">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="7.5" fill="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+            </button>
           </div>
-        </fieldset>
-        <label class="field">
-          Camera zone model
-          <select id="profile">
-            <option value="strict">Strict: Flock's published range</option>
-            <option value="default" selected>Default: padded for mapping error</option>
-            <option value="loose">Loose: generous zones</option>
-          </select>
-        </label>
-        <div class="row">
-          <button id="example" type="button">Try an example trip</button>
-          <button id="clear" type="button" class="quiet">Clear</button>
-        </div>
-        <p id="hint" class="hint">Click the map to set a start.</p>
-      </section>
+          <div class="stop">
+            <button id="targetTo" type="button" class="stop-main" aria-pressed="false">
+              <span class="dot to" aria-hidden="true"></span>
+              <span class="stop-label">To</span>
+              <span id="toText" class="stop-text"></span>
+            </button>
+            <button id="swap" type="button" class="icon-btn" aria-label="Swap start and destination">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v14M8 18l-3-3M8 18l3-3M16 20V6M16 6l-3 3M16 6l3 3"/></svg>
+            </button>
+          </div>
+          <div class="row">
+            <button id="example" type="button" class="quiet">Try an example trip</button>
+            <button id="clear" type="button" class="quiet">Clear</button>
+          </div>
+        </section>
 
-      <section id="results" hidden aria-live="polite">
-        <div id="cards" class="cards">
-          <button id="cardFastest" type="button" class="card fastest" aria-pressed="false">
-            <span class="swatch"></span><span class="label"></span><span class="big"></span><span class="small"></span>
-          </button>
-          <button id="cardChosen" type="button" class="card chosen" aria-pressed="true">
-            <span class="swatch"></span><span class="label"></span><span class="big"></span><span class="small"></span>
-          </button>
-        </div>
-        <p id="routeNote" class="note"></p>
-        <div class="row">
-          <button id="drive" type="button" disabled>Drive this route</button>
-          <label class="inline">
-            Speed
-            <select id="speed">
-              <option value="4">4×</option>
-              <option value="8" selected>8×</option>
-              <option value="16">16×</option>
-              <option value="32">32×</option>
+        <p id="notice" class="notice" role="status" hidden></p>
+
+        <section id="results" hidden>
+          <div id="options" class="options" role="group" aria-label="Route options"></div>
+          <p id="routeNote" class="note"></p>
+          <div class="row">
+            <button id="drive" type="button" disabled>Preview drive</button>
+            <label class="inline">
+              Speed
+              <select id="speed">
+                <option value="4">4×</option>
+                <option value="8" selected>8×</option>
+                <option value="16">16×</option>
+                <option value="32">32×</option>
+              </select>
+            </label>
+          </div>
+          <h2>Camera zones on this route</h2>
+          <ol id="alerts" class="alerts"></ol>
+          <p id="routeMeta" class="meta"></p>
+        </section>
+
+        <details class="settings">
+          <summary>Settings</summary>
+          <label class="field">
+            Camera zone model
+            <select id="profile">
+              <option value="strict">Strict: Flock's published range</option>
+              <option value="default" selected>Default: padded for mapping error</option>
+              <option value="loose">Loose: generous zones</option>
             </select>
           </label>
-        </div>
-        <h2>Camera zones on this route</h2>
-        <ol id="alerts" class="alerts"></ol>
-        <p id="routeMeta" class="meta"></p>
-      </section>
+        </details>
 
-      <footer>
-        <p class="legend">
-          <span class="arrow" aria-hidden="true"></span> camera, pointing where it looks
-          <span class="zone" aria-hidden="true"></span> capture zone (zoom in)
-        </p>
-        <p id="status" class="status">Loading the Dallas road network…</p>
-      </footer>
+        <footer>
+          <p class="legend">
+            <span class="swatch route" aria-hidden="true"></span> camera on your route
+            <span class="swatch avoided" aria-hidden="true"></span> camera avoided
+            <span class="swatch other" aria-hidden="true"></span> other camera
+          </p>
+          <p class="legend">Arrows point where a camera looks; zoom in to see its capture zone.</p>
+          <p id="status" class="status">Loading the Dallas road network…</p>
+        </footer>
+      </div>
     </aside>
 
     <div id="mapwrap">
       <main id="map" aria-label="Map"></main>
       <div id="banner" class="banner" role="status" aria-live="assertive" hidden><strong></strong> <span></span></div>
+      <button id="mapLocate" type="button" class="fab" aria-label="Use my current location">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="7.5" fill="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+      </button>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

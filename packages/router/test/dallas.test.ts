@@ -41,6 +41,27 @@ describe("Dallas", { skip: !hasDallas && "no data/packs/dallas.fwr" }, () => {
     }
   });
 
+  it("alternatives form an ordered frontier within the cap", () => {
+    let withChoice = 0;
+    for (const [lon0, lat0, lon1, lat1] of trips.slice(0, 60)) {
+      const a = router.snap(lon0, lat0)!, b = router.snap(lon1, lat1)!;
+      const alt = router.routeAlternatives(a, b)!;
+      const fastest = router.route(a, b)!;
+      assert.ok(alt.routes.length >= 1 && alt.routes.length <= 4);
+      assert.equal(alt.routes[0].timeS, fastest.timeS);
+      assert.ok(alt.recommended >= 0 && alt.recommended < alt.routes.length);
+      alt.routes.forEach((r, i) => {
+        assert.ok(r.timeS <= fastest.timeS * 1.5 + 1e-6, "within the +50% cap");
+        if (i > 0) {
+          assert.ok(r.timeS >= alt.routes[i - 1].timeS, "slower as cameras fall");
+          assert.ok(r.sites.length < alt.routes[i - 1].sites.length, "strictly fewer sites");
+        }
+      });
+      if (alt.routes.length > 1) withChoice++;
+    }
+    assert.ok(withChoice >= 20, `only ${withChoice} of 60 trips had a real choice`);
+  });
+
   it("A* matches plain Dijkstra on real trips", () => {
     for (const [lon0, lat0, lon1, lat1] of trips.slice(0, 20)) {
       const a = router.snap(lon0, lat0)!, b = router.snap(lon1, lat1)!;

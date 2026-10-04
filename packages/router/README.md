@@ -12,6 +12,7 @@ const a = router.snap(-96.80, 32.78)!, b = router.snap(-96.70, 32.85)!;
 router.route(a, b);                                // fastest
 router.route(a, b, { lambda: 60 });                // worth 60 s of driving to skip one capture
 router.routeWithinBudget(a, b, { maxExtra: 0.1 }); // fewest captures within +10% time
+router.routeAlternatives(a, b);                    // the trade-off options, fastest first (see below)
 router.sitesCapturingAt(lon, lat, headingDeg);     // live: which zones hold the car right now
 router.setCameras(updatedRecords);                 // hourly feed, or the user's own report
 ```
@@ -19,6 +20,16 @@ router.setCameras(updatedRecords);                 // hourly feed, or the user's
 A `Route` carries `timeS`, `distanceM`, `turns`, `coordinates` ([lon, lat]) and `sites`: the
 capture sites in the order you reach them. Each has `atM` and `untilM`, metres along the route
 where its zone starts and ends; they drive the "camera ahead" and "in a camera zone" alerts.
+
+`routeAlternatives` returns `{ routes, recommended, probes }`: up to four routes along the trip's
+time-vs-cameras frontier, fastest first, each passing strictly fewer capture sites than the one
+before and at most 50% slower than the fastest. `recommended` indexes the fewest-camera route
+within 10% more time. A trip whose fastest route passes no cameras returns that route alone. It
+sweeps the camera price (route time only rises with it), then bisects the price inside the
+recommendation window so the recommended route is as good as `routeWithinBudget`'s. On the 300
+Dallas trips it takes 91 ms typically (357 ms for the slowest tenth), 5.9 searches on average; the
+recommended route has 0.71 camera zones per trip against 0.70 for the budget search. 66 trips get
+one option, 115 two, 80 three and 39 four.
 
 ## How it works
 
