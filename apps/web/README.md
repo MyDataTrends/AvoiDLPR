@@ -35,6 +35,32 @@ as its public directory.
 Browsers only share a location on secure pages: `localhost` counts, but a deployed copy needs
 HTTPS.
 
+## Run it on your phone
+
+```bash
+npm run phone -w @flockwatch/web
+```
+
+This builds the app and serves it over **HTTPS** on your computer's private network addresses
+(default port 4173), then prints the URL to open on your phone. HTTPS is what lets the browser
+share your location: plain `http://192.168.x.x` isn't a secure page, so the location button
+wouldn't work.
+
+1. Put the phone on the same Wi-Fi as the computer.
+2. Open the `Your phone` address the script prints, for example `https://192.168.1.187:4173/`.
+3. The certificate is self-signed, so the browser warns once. Choose Advanced and proceed
+   (iPhone: Show Details, then "visit this website").
+4. Tap the location button and allow location when asked.
+
+The script generates the certificate with OpenSSL (it ships with Git for Windows) into the
+gitignored `.certs/` at the repo root, and regenerates it if your addresses change. It must not
+live under `data/`, because Vite publishes that whole folder. Nothing leaves your network.
+
+If the page won't load on the phone: let Node through Windows Firewall on private networks
+(Windows asks the first time), and if you use a VPN such as Mullvad, enable its local network
+sharing setting. The `Your phone` line names the adapter each address belongs to; the Wi-Fi one
+is the one you want. `-- --port 5000` changes the port and `-- --no-build` skips the rebuild.
+
 ## How it fits together
 
 | Piece | Role |
@@ -79,8 +105,9 @@ for it; production builds don't.
 
 ## Known limits
 
-- **Size.** The demo loads the full 19 MB road pack, about 0.5–1 s locally, plus 54 MB of
-  basemap on demand.
+- **Size.** The demo loads the full 19 MB road pack (served uncompressed by the phone server;
+  gzip would make it about 12 MB), plus 54 MB of basemap on demand. Expect a few seconds on first
+  load over Wi-Fi. A headless desktop browser took about 11 s over the LAN address.
 - **Route options.** Computing them takes about 90 ms typically and up to ~360 ms on long
   trips, in the worker.
 - **One-shot location.** "Use my location" takes a single fix. It doesn't follow you (live

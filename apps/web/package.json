@@ -9,7 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p .",
-    "fetch-basemap": "node scripts/fetch-basemap.mjs"
+    "fetch-basemap": "node scripts/fetch-basemap.mjs",
+    "phone": "node scripts/serve-phone.mjs"
   },
   "dependencies": {
     "@flockwatch/router": "*",
