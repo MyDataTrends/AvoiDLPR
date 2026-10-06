@@ -28,7 +28,8 @@ def build_region(region: Region, work: Path, data: Path, *, pbf: Path | None = N
     if pbf is not None:
         build_pack.main([str(pbf), str(pack)])
         return pack
-    row = build_batch([region], work, data, run=run, basemaps=basemap)[0]
+    # A local build has nothing published to compare with: it keeps what it builds.
+    row = build_batch([region], work, data, run=run, basemaps=basemap, decider=None)[0]
     if not row["ok"]:
         raise RuntimeError(f"{region.id}: {row['error']}")
     return pack

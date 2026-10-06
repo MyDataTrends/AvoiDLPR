@@ -13,6 +13,7 @@ device computes exposure itself from a separate camera feed.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -23,6 +24,9 @@ from .osm_graph import COORD_SCALE, HIGHWAY_CLASSES, SIGNAL_DELAY_S, RoadGraph
 MAGIC = b"FWR1"
 VERSION = 1
 _DTYPES = {"uint8", "uint16", "int32", "uint32", "float32", "float64"}
+#: The metadata that changes how a pack routes. The rest (when and from what file it was built,
+#: build statistics, the date of the map data) is provenance, and leaves the fingerprint alone.
+ROUTING_META = ("format", "version", "coord_scale", "lat0", "lon0", "highway_classes", "signal_delay_s")
 
 
 def pack_sections(g: RoadGraph) -> dict[str, np.ndarray]:
@@ -47,10 +51,12 @@ def pack_sections(g: RoadGraph) -> dict[str, np.ndarray]:
     }
 
 
-def pack_meta(g: RoadGraph, source: str, built_at: str) -> dict:
+def pack_meta(g: RoadGraph, source: str, built_at: str, osm_at: str | None = None) -> dict:
+    """`osm_at`: when the OpenStreetMap data was current (the extract's replication timestamp)."""
     lon, lat = g.geom_q[:, 0] / COORD_SCALE, g.geom_q[:, 1] / COORD_SCALE
     return {
         "format": "flockwatch-roads", "version": VERSION, "source": source, "built_at": built_at,
+        **({"osm_at": osm_at} if osm_at else {}),
         "lat0": g.lat0, "lon0": g.lon0, "coord_scale": COORD_SCALE,
         "bbox": [float(lon.min()), float(lat.min()), float(lon.max()), float(lat.max())],
         "counts": {"nodes": g.n_nodes, "edges": len(g.edge_src), "geoms": len(g.geom_ptr) - 1,
@@ -59,7 +65,24 @@ def pack_meta(g: RoadGraph, source: str, built_at: str) -> dict:
     }
 
 
+def fingerprint(meta: dict, sections: dict[str, np.ndarray]) -> str:
+    """A hash of what a pack routes like: the graph arrays and ROUTING_META.
+
+    Two builds from the same roads get the same fingerprint even though their build times
+    differ, so an area whose roads didn't change keeps its published file, and phones don't
+    download it again.
+    """
+    h = hashlib.sha256()
+    h.update(json.dumps({k: meta.get(k) for k in ROUTING_META}, sort_keys=True, separators=(",", ":")).encode())
+    for name in sorted(sections):
+        arr = np.ascontiguousarray(sections[name])
+        h.update(f"{name}:{arr.dtype.name}:{arr.size};".encode())
+        h.update(arr.astype(arr.dtype.newbyteorder("<"), copy=False).tobytes())
+    return h.hexdigest()
+
+
 def write_pack(path: Path, meta: dict, sections: dict[str, np.ndarray]) -> int:
+    meta = {**meta, "fingerprint": fingerprint(meta, sections)}
     table, blobs, offset = [], [], 0
     for name, arr in sections.items():
         arr = np.ascontiguousarray(arr)

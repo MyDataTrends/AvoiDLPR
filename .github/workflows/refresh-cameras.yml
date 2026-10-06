@@ -4,9 +4,9 @@ name: Refresh cameras
 # every region that's online. The app revalidates the feeds on every load, so changes reach users
 # within the hour. Roads and basemaps are left alone.
 #
-# Once a day it also deletes the road packs and basemaps that regions.json no longer names
-# (superseded by the monthly build), once that manifest has been live for a day: it keeps the
-# bucket at one copy of the map data, inside the storage free tier.
+# Once a day it also deletes the road packs and basemaps nothing names any more (replaced by a
+# build), a day after the switch: it keeps the bucket at about one copy of the map data, inside the
+# storage free tier.
 #
 # Needs these in the repository's Settings > Secrets and variables > Actions:
 #   secrets:   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
@@ -88,9 +88,12 @@ jobs:
             aws s3api list-objects-v2 --bucket "$R2_BUCKET" --prefix "$prefix" --endpoint-url "$R2_ENDPOINT" \
               --query 'Contents[].[Key,LastModified]' --output text >> listing.txt || true
           done
+          # The manifest the live one replaced: its files get a day's grace after the switch.
+          aws s3 cp "s3://$R2_BUCKET/regions.prev.json" previous.json --endpoint-url "$R2_ENDPOINT" --only-show-errors \
+            || echo "no previous manifest"
           # Files younger than a day are kept even if nothing names them yet: a build in progress
           # uploads its files before it publishes the manifest that points at them.
-          python -m pipeline.prune --manifest release/regions.json --listing listing.txt > stale.txt
+          python -m pipeline.prune --manifest release/regions.json --previous previous.json --listing listing.txt > stale.txt
           echo "$(wc -l < stale.txt) superseded files to delete"
           while read -r key; do
             [ -n "$key" ] && aws s3 rm "s3://$R2_BUCKET/$key" --endpoint-url "$R2_ENDPOINT" --only-show-errors
