@@ -58,6 +58,16 @@ downloads the label fonts and icon sprites the style uses. It needs the pmtiles 
 Browsers only share a location on secure pages: `localhost` counts, but a deployed copy needs
 HTTPS.
 
+## Updates
+
+Packs are replaced now and then (docs/DEPLOY.md, "Keeping the data fresh"). A new pack is
+checked against the manifest's SHA-256 and decoded before it counts; until then the service
+worker keeps the last pack that loaded, and the worker falls back to it, saying so. A pack that
+fails is evicted from the cache so the next try downloads it again. The app looks for a new
+manifest whenever it comes back on screen (and every half hour while it's on): new cameras apply
+at once; a new pack or basemap waits until no trip is being driven or previewed. The panel's
+footer shows how current the roads and cameras are.
+
 ## Install it like an app, and offline
 
 The site is a progressive web app: from a phone's browser, **Add to Home Screen** (iPhone:
@@ -159,6 +169,10 @@ being blocked. It serves its own three-area manifest, so it only needs Dallas st
 [`e2e/navigate.cjs`](e2e/navigate.cjs) (15 checks) drives the example trip with fed GPS fixes:
 the camera-ahead and in-zone alerts, going off route and rerouting, arriving, and that no
 position reaches the URL.
+
+[`e2e/updates.cjs`](e2e/updates.cjs) (12 checks) covers taking updates: a damaged new pack
+falling back to the last good one, a new pack found on return swapped in between trips but not
+mid-drive, and new cameras arriving.
 
 [`e2e/phone-and-location.cjs`](e2e/phone-and-location.cjs) drives a Pixel 7 emulation (touch
 input, a fake GPS fix) and a desktop window through 39 checks: the bottom sheet (drag, keyboard,

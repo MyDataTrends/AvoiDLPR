@@ -113,6 +113,25 @@ function check(name, ok, detail = '') {
     check('offline: routing still works (roads and cameras come from the cache)', offlineOptions >= 2, `${offlineOptions} options`);
     await ctx.setOffline(false);
     offline = false;
+
+    // ---------- updates: the service worker keeps an old pack until a new one is proven ----------
+    const packs = () => page.evaluate(async () => (await (await caches.open('fw-data-v1')).keys())
+      .map((r) => new URL(r.url).pathname).filter((p) => p.startsWith('/packs/')).sort());
+    const live = (await packs())[0];
+    const older = live.replace(/\.[0-9a-f]{10}\.fwr\.gz$/, '.0000000000.fwr.gz');
+    await page.evaluate(async ([data, path]) => (await caches.open('fw-data-v1')).put(data + path.slice(1), new Response('an older pack')),
+      [DATA, older]);
+    check('updates: a new pack arriving leaves the old one cached', (await packs()).length === 2);
+    const tell = (type, path) => page.evaluate(async ([t, url]) => {
+      navigator.serviceWorker.controller.postMessage({ type: t, url });
+      await new Promise((r) => setTimeout(r, 400));
+    }, [type, DATA + path.slice(1)]);
+    await tell('pack-ok', live);
+    check('updates: once the new pack is proven, the older version goes', JSON.stringify(await packs()) === JSON.stringify([live]),
+      JSON.stringify(await packs()));
+    await tell('pack-bad', live);
+    check('updates: a pack that failed its checks is dropped, so the next try downloads it', (await packs()).length === 0,
+      JSON.stringify(await packs()));
   } finally {
     await browser.close();
   }
