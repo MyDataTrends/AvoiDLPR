@@ -5,8 +5,9 @@ Usage: python -m pipeline.build_batch <batch> [--region ID ...] [--work work] [-
 
 1. Download each state extract the batch needs, once, and keep only drivable roads and turn
    restrictions (`osmium tags-filter`), which makes them several times smaller.
-2. Merge them (border roads appear in both neighbours and are kept once) and cut every region out
-   in a single pass (`osmium extract --config`, keeping ways whole where they cross the edge).
+2. Merge them (border roads appear in both neighbours and are kept once) and cut each region out
+   (`osmium extract`, keeping ways whole where they cross the edge). One region per pass: cutting
+   a dozen at once keeps a dozen sets of ids in memory, which ran a runner out of its 16 GB.
 3. Build each region's road pack (pipeline.build_pack -> data/packs/<id>.fwr) and basemap
    (apps/web/scripts/fetch-basemap.mjs -> data/basemap/<id>.pmtiles).
 
@@ -67,13 +68,10 @@ def merge_command(sources: Sequence[Path], target: Path) -> list[str]:
     return ["osmium", "merge", *(str(s) for s in sources), "--overwrite", "-o", str(target)]
 
 
-def extract_config(regions: Sequence[Region], directory: Path) -> dict:
-    return {"directory": str(directory),
-            "extracts": [{"output": f"{r.id}.osm.pbf", "bbox": list(r.clip_bbox)} for r in regions]}
-
-
-def extract_command(config: Path, source: Path) -> list[str]:
-    return ["osmium", "extract", "--config", str(config), "--strategy", "complete_ways", "--overwrite", str(source)]
+def extract_command(region: Region, source: Path, target: Path) -> list[str]:
+    w, s, e, n = region.clip_bbox
+    return ["osmium", "extract", "-b", f"{w},{s},{e},{n}", "--strategy", "complete_ways", "--overwrite",
+            "-o", str(target), str(source)]
 
 
 def basemap_command(region_id: str, build: str) -> list[str]:
@@ -119,17 +117,16 @@ def build_batch(regions: Sequence[Region], work: Path, data: Path, *, run: Run =
     merged = prepare_sources(list(dict.fromkeys(sources)), work, run)
     clips = work / "regions"
     clips.mkdir(parents=True, exist_ok=True)
-    config = work / "extracts.json"
-    config.write_text(json.dumps(extract_config(regions, clips), indent=2), encoding="utf-8")
-    run(extract_command(config, merged))
 
     report = []
     for r in regions:
         row: dict = {"id": r.id, "name": r.name, "batch": r.batch, "ok": False}
         t0 = time.perf_counter()
-        pack = data / "packs" / f"{r.id}.fwr"
+        pack, clip = data / "packs" / f"{r.id}.fwr", clips / f"{r.id}.osm.pbf"
         try:
-            build_pack.main([str(clips / f"{r.id}.osm.pbf"), str(pack)])
+            run(extract_command(r, merged, clip))
+            build_pack.main([str(clip), str(pack)])
+            clip.unlink(missing_ok=True)
             counts = read_header(pack)["counts"]
             row.update(nodes=counts["nodes"], edges=counts["edges"], pack_bytes=pack.stat().st_size)
             if counts["edges"] > MAX_EDGES:

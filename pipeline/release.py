@@ -96,9 +96,7 @@ def pmtiles_maxzoom(path: Path) -> int | None:
 def stage_region(region: Region, data: Path, out: Path) -> dict | None:
     """Stage one region's pack and basemap; returns its manifest entry (None if it isn't built)."""
     pack, basemap = data / "packs" / f"{region.id}.fwr", data / "basemap" / f"{region.id}.pmtiles"
-    missing = [p.name for p in (pack, basemap) if not p.exists()]
-    if missing:
-        print(f"{region.id}: skipped, missing {', '.join(missing)} in {data}", file=sys.stderr)
+    if not (pack.exists() and basemap.exists()):
         return None
     header = read_header(pack)
     gz = out / "packs" / f"{region.id}.fwr.gz.tmp-src"
@@ -197,6 +195,8 @@ def stage_release(data: Path, out: Path, regions: list[Region]) -> dict:
     entries = [e for r in regions if (e := stage_region(r, data, out))]
     if not entries:
         raise RuntimeError("nothing to release: no region has both a road pack and a basemap in " + str(data))
+    if len(entries) < len(regions):
+        print(f"{len(regions) - len(entries)} of {len(regions)} regions aren't built in {data}; staging the other {len(entries)}")
     stage_assets(data, out)
     for e in entries:  # a fresher feed from pipeline.refresh_cameras wins
         feed, local = out / e["cameras"]["path"], data / "packs" / f"{e['id']}.cameras.json"
@@ -231,6 +231,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.part:
         wanted = set(args.region)
         entries = [e for r in regions if r.id in wanted and (e := stage_region(r, args.data, args.out))]
+        missing = sorted(wanted - {e["id"] for e in entries})
+        if missing:
+            print(f"not built, so not staged: {', '.join(missing)}", file=sys.stderr)
         path = write_part(args.out, args.part, entries)
         _summary(entries)
         print(f"wrote {path} ({len(entries)} of {len(wanted)} regions)")

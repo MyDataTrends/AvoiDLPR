@@ -221,11 +221,6 @@ def _fake_runner(grid, calls):
         calls.append(cmd)
         if "-o" in cmd:
             shutil.copy(grid, cmd[cmd.index("-o") + 1])
-        if cmd[:2] == ["osmium", "extract"]:
-            with open(cmd[cmd.index("--config") + 1], encoding="utf-8") as f:
-                config = json.load(f)
-            for x in config["extracts"]:
-                shutil.copy(grid, f"{config['directory']}/{x['output']}")
     return run
 
 
@@ -241,8 +236,7 @@ def test_build_region_downloads_clips_and_builds(tmp_path):
     assert ("w/highway=motorway,motorway_link,trunk,trunk_link,primary,primary_link,secondary,secondary_link,"
             "tertiary,tertiary_link,unclassified,residential,living_street,service") in calls[1]
     assert "r/type=restriction" in calls[1] and "complete_ways" in calls[2]
-    config = json.loads((tmp_path / "work" / "extracts.json").read_text())
-    assert config["extracts"] == [{"output": "dallas.osm.pbf", "bbox": [-97.05, 32.63, -96.53, 32.94]}]
+    assert calls[2][2:4] == ["-b", "-97.05,32.63,-96.53,32.94"]
     assert pack == tmp_path / "data" / "packs" / "dallas.fwr" and read_header(pack)["counts"]["edges"] == 78
     assert not (tmp_path / "work" / "src" / "north-america_us_texas.osm.pbf").exists()  # raw download freed
 
@@ -277,7 +271,8 @@ def test_a_batch_downloads_each_state_once_merges_and_survives_a_bad_region(tmp_
     downloads = [c[-1] for c in calls if c[0] == "curl"]
     assert downloads == ["https://download.geofabrik.de/north-america/us/north-carolina-latest.osm.pbf",
                          "https://download.geofabrik.de/north-america/us/south-carolina-latest.osm.pbf"]
-    assert [c[1] for c in calls if c[0] == "osmium"] == ["tags-filter", "tags-filter", "merge", "extract"]
+    # each state filtered once, merged once, then one cut per region
+    assert [c[1] for c in calls if c[0] == "osmium"] == ["tags-filter", "tags-filter", "merge", "extract", "extract", "extract"]
     assert [(r["id"], r["ok"]) for r in report] == [("a", True), ("b", True), ("big", False)]
     assert "too big for a phone" in report[2]["error"] and not (tmp_path / "data" / "packs" / "big.fwr").exists()
     assert report[0]["edges"] == 78 and report[0]["pack_bytes"] > 0
