@@ -191,7 +191,7 @@ Notes:
 |---|---|---|
 | Workers static files | 25 MiB per file, 20,000 files, requests for static files free | The app is about 2 MB; big files live in R2 |
 | R2 | 10 GB stored, 1M writes and 10M reads a month, **no egress fees** | The data is about 7 GB, and the daily cleanup keeps one copy. The hourly feeds are about 100,000 writes a month. A map tile is one read; rough guess a few hundred per session, so tens of thousands of sessions a month before reads cost anything (about $0.36 per million after) |
-| GitHub Actions | Free for public repositories | An hourly job of about a minute, a nightly road update, and a monthly build of about two hours of runner time (20 minutes on the clock) |
+| GitHub Actions | Free for public repositories | An hourly job of about a minute, a nightly road update, and a monthly build of about three hours of runner time (half an hour on the clock; the search indexes add about a minute an area) |
 | Geofabrik, Protomaps | Free downloads, fair use | The monthly build fetches each state once (about 10 GB) and cuts each basemap out of Protomaps' daily planet build; the nightly update only fetches Geofabrik's daily change files |
 
 These are from public pricing pages in October 2026 and change; check before relying on them.
