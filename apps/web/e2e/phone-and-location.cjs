@@ -216,7 +216,7 @@ async function drag(page, selector, dy) {
     await page.locator('#mapLocate').tap();
     // Wait on the start field itself: the "Finding your location…" notice also contains the words.
     await page.locator('#fromText', { hasText: 'Your location' }).waitFor({ timeout: 15_000 });
-    check('gps: start becomes "Your location" with its accuracy', /Your location · ±25 m/.test(await page.locator('#fromText').innerText()));
+    check('gps: start becomes "Your location" with its accuracy', /Your location · ±(25 m|80 ft)/.test(await page.locator('#fromText').innerText()));
     check('gps: a location dot is drawn', (await page.locator('.gps-dot').count()) === 1);
     check('gps: the location is not written to the URL', !/from/.test(await page.evaluate(() => location.hash)), await page.evaluate(() => location.hash));
     check('gps: next tap targets the destination', (await page.locator('#targetTo').getAttribute('aria-pressed')) === 'true');

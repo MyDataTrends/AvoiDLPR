@@ -3,16 +3,17 @@
 **Driving directions that steer around license plate cameras.**
 
 AvoiDLPR is a free map app that knows where automated license plate readers (ALPRs) are,
-Flock Safety cameras included. It finds routes that pass as few of them as possible and shows
-you what each route costs in cameras and in minutes. It runs in your phone's browser, installs
-to your home screen like an app, and never sends your location or your destination anywhere.
+Flock Safety cameras included. It finds routes that pass as few of them as possible, shows you
+what each route costs in cameras and in minutes, and warns you as you drive. It runs in your
+phone's browser, installs to your home screen like an app, and never sends your location or your
+destination anywhere.
 
 <p align="center">
   <img src="docs/images/desktop.jpg" width="900" alt="AvoiDLPR on a laptop. A trip across Dallas has four route options, from the fastest (26 minutes, through 6 camera zones) to the one with the fewest cameras (28 minutes, through none). Each camera is drawn on the map as an arrow showing which way it points.">
 </p>
 
-> **Status:** a working prototype that isn't public yet. It covers Dallas today and is being
-> expanded to major US cities. The public link will go here when it's live.
+> **Status:** built for 135 US metro areas, from New York to Los Angeles and Charlotte to
+> Seattle, but not public yet. The link will go here when it's live.
 
 ## Why
 
@@ -50,18 +51,22 @@ is a good place to learn more.
    trade a few minutes for fewer camera zones, each labelled with its time and its number of
    zones. The one marked *Recommended* avoids the most zones while adding no more than about
    10% to the trip. You pick.
-4. **Preview the drive.** Watch your route play out on the map, with a warning before each
-   camera and a banner while you're in its view.
+4. **Drive.** Tap **Start** and AvoiDLPR follows your phone's GPS along the route: a warning
+   before each camera zone, a banner and a chime while you're in one, and a new route if you
+   leave this one. Keep the app open with the screen on; phones pause web apps in the
+   background. (**Preview drive** plays the trip back on the map, to see where the zones are.)
 
-To plan a trip, tap the map to set where you're starting (or use your current location) and
-where you're going.
+AvoiDLPR works one metro area at a time: the first time you open it, it asks where you drive (or
+finds your area from your location) and downloads that area's road map, a few megabytes. To plan
+a trip, tap the map to set where you're starting (or use your current location) and where you're
+going.
 
 ## Your privacy
 
 - **Routing happens on your phone.** The app downloads your area's road map and camera list
   once, then works out every route on the device. Your location, start and destination are
   never sent anywhere. There's no AvoiDLPR server to send them to.
-- **No account, no ads, no analytics.**
+- **No account, no ads, no analytics.** The app remembers which area you picked, on your device.
 - Like any online map, it downloads map images for the area on screen. Those come from
   AvoiDLPR's own file host (not Google or Apple) and carry no account or identifier.
 - After the first visit, route planning works offline too.
@@ -92,10 +97,9 @@ cover anywhere the cameras are mapped.
 
 ## Coming next
 
-- Live alerts while you drive, following your phone's GPS (today the alerts play in the
-  preview)
-- More cities, across the US
 - Searching for an address instead of tapping the map
+- Daily road updates (the camera map already updates hourly)
+- Trips between areas, and the rest of the country outside the metros
 - Reporting a camera from inside the app
 - Plugins that bring camera zones to open-source navigation apps
 

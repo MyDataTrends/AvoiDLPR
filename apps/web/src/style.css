@@ -643,3 +643,251 @@ footer {
     animation: none;
   }
 }
+
+/* ---------- area: the title row's switcher and the chooser ---------- */
+
+.title-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.region-btn {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  min-height: 36px;
+  padding: 4px 8px 4px 10px;
+  border-color: var(--line);
+  background: #fff;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.region-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.notice-action {
+  justify-self: start;
+  margin-top: -8px;
+}
+
+.chooser {
+  width: min(460px, calc(100vw - 32px));
+  max-height: min(720px, calc(100dvh - 48px));
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.3);
+  color: var(--ink);
+}
+
+.chooser[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 18px 0;
+}
+
+.chooser::backdrop {
+  background: rgb(15 20 25 / 0.45);
+}
+
+:root[data-chooser="required"] .chooser::backdrop {
+  background: var(--bg);
+}
+
+.chooser-head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chooser-head h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+
+.locate-btn {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
+  font-weight: 600;
+}
+
+.locate-btn svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-width: 2;
+}
+
+.locate-btn[aria-busy="true"] {
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.chooser input[type="search"] {
+  min-height: var(--tap);
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 16px; /* 16px keeps iOS from zooming the page on focus */
+}
+
+.chooser input[type="search"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.chooser-nearby:empty {
+  display: none;
+}
+
+.chooser-nearby,
+.chooser-list ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chooser-list {
+  display: grid;
+  flex: 1;
+  gap: 14px;
+  min-height: 120px;
+  padding-bottom: 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.chooser-list h3 {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.area {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+  width: 100%;
+  min-height: var(--tap);
+  border-color: var(--line);
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+}
+
+.area[aria-current="true"] {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 1px var(--ink);
+}
+
+.area-name {
+  font-size: 15px;
+}
+
+.area-meta {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .chooser {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+
+  .chooser[open] {
+    padding: max(16px, env(safe-area-inset-top)) 16px 0;
+  }
+}
+
+/* The dialog starts with focus on its title, so nothing looks pressed on a phone. */
+.chooser-head h2:focus {
+  outline: none;
+}
+
+/* ---------- live navigation ---------- */
+
+button.start {
+  min-width: 96px;
+  font-weight: 600;
+}
+
+button.start[aria-pressed="true"] {
+  border-color: var(--zone);
+  background: var(--zone);
+}
+
+.check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 40px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.head-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.head-row .summary {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 760px) {
+  .head-row {
+    padding: 0 12px 10px 0;
+  }
+
+  .head-row .summary {
+    padding-bottom: 0;
+  }
+
+  .head-start {
+    flex: none;
+    min-width: 76px;
+    min-height: 40px;
+    padding: 6px 14px;
+  }
+}

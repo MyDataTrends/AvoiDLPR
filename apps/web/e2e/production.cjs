@@ -98,7 +98,7 @@ function check(name, ok, detail = '') {
       Boolean(shell) && shell[1].length >= 8 && shell[1].includes('/') && shell[1].some((p) => /^\/assets\/index-.*\.js$/.test(p)), shell ? `${shell[1].length} files` : 'none');
     const data = sw.caches.find(([k]) => k === 'fw-data-v1');
     check('service worker: the road pack, camera feed and manifest are cached for offline use',
-      Boolean(data) && data[1].some((p) => /\/packs\/dallas\.[0-9a-f]{10}\.fwr$/.test(p)) && data[1].some((p) => p.endsWith('/cameras/dallas.json')) && data[1].some((p) => p.endsWith('/regions.json')),
+      Boolean(data) && data[1].some((p) => /\/packs\/dallas\.[0-9a-f]{10}\.fwr\.gz$/.test(p)) && data[1].some((p) => p.endsWith('/cameras/dallas.json')) && data[1].some((p) => p.endsWith('/regions.json')),
       data ? data[1].join(', ') : 'none');
 
     // ---------- offline ----------

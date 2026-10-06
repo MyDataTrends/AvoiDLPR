@@ -76,7 +76,8 @@ export class Sheet {
   }
 
   private down(e: PointerEvent): void {
-    if (!this.isSheet) return;
+    // Buttons in the head (Start) are buttons, not drag handles.
+    if (!this.isSheet || (e.target as Element).closest("button:not(.handle)")) return;
     this.head.setPointerCapture(e.pointerId);
     this.drag = { startY: e.clientY, startH: this.height(), moved: false, lastY: e.clientY, lastT: e.timeStamp, v: 0 };
   }

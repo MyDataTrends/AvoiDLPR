@@ -54,13 +54,46 @@ async function fetchOk(url: string, init?: RequestInit): Promise<globalThis.Resp
   return res;
 }
 
+/**
+ * Download a road pack, reporting progress, and un-gzip it. Packs are published gzipped (a third
+ * of the size); a host or proxy that already decoded it hands over the plain pack, so the gzip
+ * magic bytes decide, not the file name.
+ */
+async function fetchPack(url: string, expectedBytes: number): Promise<ArrayBuffer> {
+  const res = await fetchOk(url);
+  const total = expectedBytes || Number(res.headers.get("content-length")) || 0;
+  const chunks: Uint8Array[] = [];
+  let loaded = 0, lastReport = 0;
+  const reader = res.body!.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.byteLength;
+    const now = performance.now();
+    if (now - lastReport > 150) {
+      lastReport = now;
+      scope.postMessage({ type: "progress", loaded, total });
+    }
+  }
+  const bytes = new Uint8Array(loaded);
+  let at = 0;
+  for (const c of chunks) {
+    bytes.set(c, at);
+    at += c.byteLength;
+  }
+  if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) return bytes.buffer;
+  scope.postMessage({ type: "progress", loaded, total: loaded, unpacking: true });
+  return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
+}
+
 scope.onmessage = async (ev) => {
   const msg = ev.data;
   try {
     if (msg.type === "load") {
       const t0 = performance.now();
       const [pack, feed] = await Promise.all([
-        fetchOk(msg.packUrl).then((r) => r.arrayBuffer()),
+        fetchPack(msg.packUrl, msg.packBytes),
         // The pack is content-hashed and cached forever; the camera feed changes hourly, so it is
         // revalidated on every load (a cheap 304 when nothing changed).
         fetchOk(msg.camerasUrl, { cache: "no-cache" }).then((r) => r.json() as Promise<{ cameras: CameraRecord[] }>),
@@ -81,7 +114,7 @@ scope.onmessage = async (ev) => {
       if (!a || !b) {
         scope.postMessage({
           type: "noroute", id: msg.id,
-          reason: `There's no road within ${SNAP_MAX_M} m of the ${a ? "destination" : "start"}. Try a spot closer to a street.`,
+          reason: `There's no road near the ${a ? "destination" : "start"} (none within ${SNAP_MAX_M} m). Try a spot closer to a street.`,
         });
         return;
       }
