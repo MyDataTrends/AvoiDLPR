@@ -1,0 +1,15 @@
+// The app is deployed as a Cloudflare Worker that only serves static files: the Vite build in
+// apps/web/dist, with its _headers file (the Content-Security-Policy and caching rules). There's
+// no Worker code. Workers Builds runs the build command (`npm ci && npm run build`), then
+// `npx wrangler deploy`, which reads this file. docs/DEPLOY.md, step 5, has the settings.
+//
+// `name` must match the Worker's name in the Cloudflare dashboard, or the deploy step fails.
+{
+  "name": "avoidlpr",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./apps/web/dist",
+    // The app is one page; any other path gets it too (state lives in the URL's #hash).
+    "not_found_handling": "single-page-application"
+  }
+}

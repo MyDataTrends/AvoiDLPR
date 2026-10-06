@@ -82,7 +82,7 @@ full-screen with no browser bar. The app also shows install instructions in the 
   pack, camera feed and manifest are cached, so **routing works offline**. Map tiles are the one
   thing that still needs a connection. A new version reloads open tabs once, so a tab never runs
   files the new worker has retired. It's registered in production builds only.
-- **Headers** (`_headers`, emitted by the build for Cloudflare Pages and Netlify): the
+- **Headers** (`_headers`, emitted by the build for Cloudflare Workers, Pages and Netlify): the
   Content-Security-Policy, caching rules, and a permissions policy.
 
 ## Production build
@@ -92,7 +92,7 @@ VITE_DATA_BASE=https://data.example.com npm run build -w @flockwatch/web   # -> 
 ```
 
 `dist/` is a plain static site: deploy it to any host that honours a `_headers` file (Cloudflare
-Pages, Netlify). [docs/DEPLOY.md](../../docs/DEPLOY.md) has the full setup.
+Workers or Pages, Netlify). [docs/DEPLOY.md](../../docs/DEPLOY.md) has the full setup.
 
 ## Run it on your phone
 

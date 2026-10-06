@@ -8,7 +8,7 @@ hosting is free-tier friendly and there's nothing to keep running.
                  /        |         \
    push to main /         |hourly    \monthly
                v          v           v
-   Cloudflare Pages   refresh-cameras  build-data      GitHub Actions
+  Cloudflare Worker   refresh-cameras  build-data      GitHub Actions
    (the app, ~2 MB)        |            |
           |                +-----+------+
           |                      v
@@ -21,7 +21,7 @@ hosting is free-tier friendly and there's nothing to keep running.
 
 | Piece | Where | What it is |
 |---|---|---|
-| The app | Cloudflare Pages | `apps/web`, built by Vite: about 2 MB of HTML, JS and CSS, plus the service worker and the headers file |
+| The app | Cloudflare Worker (static files only) | `apps/web`, built by Vite: about 2 MB of HTML, JS and CSS, plus the service worker and the headers file |
 | The data | Cloudflare R2 bucket | For each of 135 US metro areas: a gzipped road pack (1 to 13 MB), a Protomaps basemap extract (20 to 120 MB) and a camera feed refreshed hourly; plus fonts and sprites. About 7 GB in all, described by `regions.json` |
 | Data refresh | GitHub Actions | `build-data` (monthly) and `refresh-cameras` (hourly) |
 
@@ -56,11 +56,11 @@ Actions minutes free, and an open project is an easier pitch).
    to the bucket instead (about $10 a year for a domain on Cloudflare DNS), which also gets
    Cloudflare's cache in front of the files.
 3. **CORS.** Bucket **Settings > CORS policy**, add (replace the first origin once you know your
-   Pages address in step 5; keep localhost for development):
+   app's address in step 5; keep localhost for development):
    ```json
    [
      {
-       "AllowedOrigins": ["https://<your-project>.pages.dev", "http://localhost:5173"],
+       "AllowedOrigins": ["https://avoidlpr.<your-subdomain>.workers.dev", "http://localhost:5173"],
        "AllowedMethods": ["GET", "HEAD"],
        "AllowedHeaders": ["range", "if-match", "if-none-match"],
        "ExposeHeaders": ["etag", "content-range", "content-length", "accept-ranges"],
@@ -104,29 +104,35 @@ run is the first to upload. The run's summary page lists every area with its siz
 - Check it worked: open `https://<public-url>/regions.json`. You should see the manifest.
 - From now on the hourly camera refresh runs by itself (it waits for a published manifest).
 
-### 5. Deploy the app (Cloudflare Pages)
+### 5. Deploy the app (a Cloudflare Worker)
 
-**Workers & Pages > Create > Pages > Connect to Git**, choose the repository, then:
+The app is static files, served by a Worker with no code of its own: `wrangler.jsonc` at the repo
+root tells it where the built files are (`apps/web/dist`). **Workers & Pages > Create > Import a
+repository**, choose the repository, then:
 
 | Setting | Value |
 |---|---|
+| Worker name | `avoidlpr`: it has to match `name` in `wrangler.jsonc` |
 | Production branch | `main` |
 | Build command | `npm ci && npm run build` |
-| Build output directory | `apps/web/dist` |
-| Environment variable | `NODE_VERSION` = `22` |
-| Environment variable | `VITE_DATA_BASE` = your bucket's public URL, no trailing slash |
+| Deploy command | `npx wrangler deploy` (the default) |
+| Root directory | empty (the repo root) |
+| Build variable | `NODE_VERSION` = `22` |
+| Build variable | `VITE_DATA_BASE` = your bucket's public URL, no trailing slash |
 
-(If the dashboard steers you toward Workers static assets instead of Pages, the same build
-command, output directory and variables apply.)
+The two variables go under **Settings > Build > Variables and secrets**: they're *build*
+variables, not the Worker's runtime ones. `VITE_DATA_BASE` is baked in when the app is built,
+and also becomes the data host in the Content-Security-Policy, so the browser will refuse to
+talk to anything else; change it and the app has to be rebuilt (retry the deployment). After the
+first deploy, copy the Worker's address (`https://avoidlpr.<your-subdomain>.workers.dev`) into
+the R2 CORS policy from step 2. Every push to `main` redeploys.
 
-`VITE_DATA_BASE` is baked in at build time, and also becomes the data host in the
-Content-Security-Policy, so the browser will refuse to talk to anything else. After the first
-deploy, copy your `https://<project>.pages.dev` address into the R2 CORS policy from step 2.
-Every push to `main` redeploys.
+(Cloudflare Pages, now the legacy option, works too: build output directory `apps/web/dist`,
+and the same build command and variables.)
 
 ### 6. Try it on your phone
 
-1. Open the Pages address. It asks where you drive: tap **Use my location** (or pick from the
+1. Open the app's address. It asks where you drive: tap **Use my location** (or pick from the
    list). Your area's road map downloads, a few MB.
 2. Tap the map for a destination, pick a route, and tap **Start**. Drive with the app open and
    the screen on; it warns before each camera zone and chimes inside one.
@@ -146,7 +152,7 @@ Every push to `main` redeploys.
 | What | When | Where it runs |
 |---|---|---|
 | Tests, type-check, build | every push and pull request | `ci.yml` |
-| App redeploy | every push to `main` | Cloudflare Pages |
+| App redeploy | every push to `main` | Cloudflare (Workers Builds) |
 | Camera feeds refreshed from DeFlock | hourly | `refresh-cameras.yml` |
 | Roads updated, changed areas' packs checked and republished | nightly (07:30 UTC) | `build-data.yml` (roads) |
 | Road packs and basemaps rebuilt from fresh downloads | monthly (the 3rd), or on demand | `build-data.yml` (full) |
@@ -179,7 +185,7 @@ Notes:
 
 | | Limit | Why it's comfortable |
 |---|---|---|
-| Pages | 25 MiB per file, 20,000 files, no hard bandwidth cap (fair use) | The app is about 2 MB; big files live in R2 |
+| Workers static files | 25 MiB per file, 20,000 files, requests for static files free | The app is about 2 MB; big files live in R2 |
 | R2 | 10 GB stored, 1M writes and 10M reads a month, **no egress fees** | The data is about 7 GB, and the daily cleanup keeps one copy. The hourly feeds are about 100,000 writes a month. A map tile is one read; rough guess a few hundred per session, so tens of thousands of sessions a month before reads cost anything (about $0.36 per million after) |
 | GitHub Actions | Free for public repositories | An hourly job of about a minute, a nightly road update, and a monthly build of about two hours of runner time (20 minutes on the clock) |
 | Geofabrik, Protomaps | Free downloads, fair use | The monthly build fetches each state once (about 10 GB) and cuts each basemap out of Protomaps' daily planet build; the nightly update only fetches Geofabrik's daily change files |

@@ -114,7 +114,7 @@ TypeScript: MapLibre GL with a self-hosted Protomaps basemap, and its own router
 a Web Worker on your phone. The code still uses the project's working name, FlockWatch.
 
 - [docs/DEVELOPING.md](docs/DEVELOPING.md): building, testing and adding a city
-- [docs/DEPLOY.md](docs/DEPLOY.md): hosting it for free (Cloudflare Pages and R2, GitHub Actions)
+- [docs/DEPLOY.md](docs/DEPLOY.md): hosting it for free (Cloudflare Workers and R2, GitHub Actions)
 - [spike/routing/ROUTING.md](spike/routing/ROUTING.md): the camera-zone model and the routing
   math
 - [spike/FINDINGS.md](spike/FINDINGS.md): where the camera data comes from and how good it is
