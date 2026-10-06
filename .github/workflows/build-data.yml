@@ -39,9 +39,19 @@ env:
 
 jobs:
   build:
+    # Until the bucket is configured, the monthly run is skipped rather than failing. A manual run
+    # still goes ahead, and the first step says what's missing.
+    if: vars.R2_BUCKET != '' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
+      - name: Check the bucket is configured
+        run: |
+          if [ -z "$R2_BUCKET" ]; then
+            echo "::error::Set the R2_BUCKET repository variable and the R2_* secrets first (docs/DEPLOY.md, step 3)."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4

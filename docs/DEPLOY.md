@@ -35,17 +35,15 @@ Roughly 45 minutes, most of it clicking through dashboards. Do these in order.
 
 ### 1. Put the repository on GitHub
 
-- Create an empty repository (public is recommended: Actions minutes are free for public repos,
-  and an open project is an easier pitch). Don't add a README or license in the GitHub form.
-- From `C:\Projects\flockwatch`:
-  ```bash
-  git remote add origin https://github.com/<you>/<repo>.git
-  git push -u origin main
-  ```
-- **Choose a license for the code.** There isn't one yet, which means nobody may legally reuse it.
-  MIT or Apache-2.0 for maximum adoption (what a Waze or DeFlock integration would want), or
-  AGPL-3.0 if you'd rather keep forks open. The data has its own license (see "Licensing" below).
-- CI (`.github/workflows/ci.yml`) starts running on the first push. Check it goes green.
+Done: [MyDataTrends/AvoiDLPR](https://github.com/MyDataTrends/AvoiDLPR), public (which keeps
+Actions minutes free, and an open project is an easier pitch).
+
+- GitHub created the repository with a LICENSE and a README, so the first push needed that commit
+  merged in (`git pull origin main --allow-unrelated-histories`, keep both, push).
+- The code is Apache-2.0: permissive, with a patent grant, so a Waze or DeFlock integration can
+  adopt it without asking. The data has its own license (see "Licensing" below).
+- CI (`.github/workflows/ci.yml`) runs on every push. The hourly and monthly data jobs are
+  skipped, not failing, until the `R2_BUCKET` variable from step 3 exists.
 
 ### 2. Create the data bucket (Cloudflare R2)
 
@@ -215,7 +213,7 @@ These are from public pricing pages in October 2026 and change; check before rel
   attribution and share-alike terms apply to it: keep them public and credited. Read the license
   before you commercialise; this is not legal advice.
 - **Fonts** (Noto Sans, from Protomaps' basemap assets) are SIL OFL.
-- **Code:** no license chosen yet (see step 1).
+- **Code:** Apache-2.0 (`LICENSE`).
 - **Camera data** is crowdsourced and sometimes wrong. The UI says what each zone assumes, and
   every camera links to OpenStreetMap so errors can be fixed at the source.
 

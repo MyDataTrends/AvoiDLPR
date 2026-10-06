@@ -52,9 +52,10 @@ jobs:
           VITE_DATA_BASE: https://data.example.com
 
       - name: The build contains no map data and no secrets
+        # (Not `! find ... | grep .`: bash's errexit ignores a negated command, so that never fails.)
         run: |
-          set -e
           test -f apps/web/dist/sw.js
           test -f apps/web/dist/_headers
-          ! find apps/web/dist \( -name '*.fwr' -o -name '*.pmtiles' -o -name '*.key' -o -name '*.pem' \) | grep .
+          found="$(find apps/web/dist \( -name '*.fwr' -o -name '*.pmtiles' -o -name '*.key' -o -name '*.pem' \))"
+          if [ -n "$found" ]; then echo "::error::map data or keys in the build:"; echo "$found"; exit 1; fi
           du -sh apps/web/dist
