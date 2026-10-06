@@ -163,8 +163,6 @@ const state = {
   drive: null as Drive | null,
   nav: null as Nav | null,
   sheetBeforeDrive: null as "peek" | "half" | "full" | null,
-  /** The sheet's height before a search opened it up, to go back to. */
-  sheetBeforeSearch: null as "peek" | "half" | "full" | null,
 };
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
@@ -1096,6 +1094,38 @@ function showCamera(c: CameraDTO, at: LngLat): void {
 }
 
 // ---------- search ----------
+//
+// On a phone, typing in a stop field turns the panel into a full-screen search: the fields at the
+// top and the results under them, in what the keyboard leaves of the screen (the visual viewport),
+// so no result hides behind the keyboard. Leaving the field (a result, Back, Escape, the keyboard's
+// Done) puts the sheet back.
+
+/** Keep --vv-top and --vv-h on the visible part of the screen, which the keyboard shrinks. */
+function trackVisibleArea(): void {
+  const vv = window.visualViewport;
+  const root = document.documentElement.style;
+  const apply = () => {
+    root.setProperty("--vv-top", `${Math.round(vv?.offsetTop ?? 0)}px`);
+    root.setProperty("--vv-h", `${Math.round(vv?.height ?? window.innerHeight)}px`);
+  };
+  apply();
+  vv?.addEventListener("resize", apply);
+  vv?.addEventListener("scroll", apply);
+  window.addEventListener("resize", apply);
+}
+trackVisibleArea();
+
+/** Enter the phone search view for a stop, or leave it (null). */
+function searchView(stop: Stop | null): void {
+  const root = document.documentElement;
+  if (stop && sheet.isSheet) {
+    $("searchTitle").textContent = stop === "from" ? "Where are you starting?" : "Where to?";
+    root.dataset.searching = "true";
+    document.querySelector(".sheet-body")!.scrollTop = 0; // the fields at the top
+  } else {
+    delete root.dataset.searching;
+  }
+}
 
 const placesFile = (r: RegionEntry): PlacesFile | null =>
   r.places ? { url: dataUrl(r.places.path), bytes: r.places.bytes, sha256: r.places.sha256 } : null;
@@ -1111,27 +1141,18 @@ const search = new StopSearch({ from: $<HTMLInputElement>("fromInput"), to: $<HT
   focused: (stop) => {
     state.target = stop;
     renderStops();
-    if (sheet.isSheet) {
-      state.sheetBeforeSearch ??= sheet.state;
-      sheet.set("full"); // room for the results above the keyboard
-      $("trip").scrollIntoView({ block: "start" });
-    }
+    searchView(stop);
   },
   picked: (stop, r: PlaceResult) => {
-    state.sheetBeforeSearch = null; // the routes are next: the sheet goes to half
     setStops({ [stop]: [r.lon, r.lat], names: { [stop]: { text: r.name, searched: r.kind === "place" || r.kind === "address" } } });
-    if (sheet.isSheet) sheet.set("half");
+    if (sheet.isSheet) sheet.set("half"); // the routes are next
   },
   chooseOnMap: (stop) => {
     state.target = stop;
-    state.sheetBeforeSearch = null;
     renderStops();
     if (sheet.isSheet) sheet.set("peek"); // so the map is there to tap
   },
-  closed: () => {
-    if (sheet.isSheet && state.sheetBeforeSearch && sheet.state === "full") sheet.set(state.sheetBeforeSearch);
-    state.sheetBeforeSearch = null;
-  },
+  closed: () => searchView(null),
   loaded: (url) => {
     navigator.serviceWorker?.controller?.postMessage({ type: "pack-ok", url });
     nameStops();
@@ -1142,6 +1163,10 @@ const search = new StopSearch({ from: $<HTMLInputElement>("fromInput"), to: $<HT
   },
 });
 search.setFile(placesFile(region));
+// Back, in the phone search view. The press mustn't take focus from the field first: that would
+// close the view and leave the finger on whatever is under it.
+$("searchClose").addEventListener("pointerdown", (e) => e.preventDefault());
+$("searchClose").addEventListener("click", () => search.dismiss());
 if (import.meta.env.DEV) Object.assign((window as unknown as { __fw: object }).__fw, { search });
 
 /** Name stops set by tapping the map after what's at that spot ("Near 104 Main Street"). */

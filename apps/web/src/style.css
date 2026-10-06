@@ -236,6 +236,22 @@ select {
   appearance: none;
 }
 
+/* The phone search view's title bar (see the phone section); hidden everywhere else. */
+.search-bar {
+  display: none;
+  gap: 8px;
+  align-items: center;
+}
+
+.icon-btn.back-btn {
+  border-color: transparent;
+}
+
+.search-title {
+  font-size: 17px;
+  font-weight: 650;
+}
+
 /* ---------- search results, under the stops ---------- */
 
 .suggestions {
@@ -697,6 +713,50 @@ footer {
   select,
   .stop-input {
     font-size: 16px;
+  }
+
+  /* Searching: the panel becomes a full-screen search, sized to what the keyboard leaves visible
+     (--vv-top and --vv-h follow the visual viewport), with the results scrolling under the
+     fields instead of disappearing behind the keyboard. */
+  html[data-searching="true"] #panel {
+    top: var(--vv-top, 0px);
+    bottom: auto;
+    height: var(--vv-h, 100dvh);
+    padding-bottom: 0;
+    border-radius: 0;
+    box-shadow: none;
+    transition: none;
+  }
+
+  html[data-searching="true"] .sheet-head,
+  html[data-searching="true"] .sheet-body > :not(.trip),
+  html[data-searching="true"] .trip > .row,
+  html[data-searching="true"] .fab {
+    display: none;
+  }
+
+  html[data-searching="true"] .sheet-body {
+    overflow: hidden;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  html[data-searching="true"] .trip {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  html[data-searching="true"] .search-bar {
+    display: flex;
+  }
+
+  html[data-searching="true"] .suggestions {
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   button {
