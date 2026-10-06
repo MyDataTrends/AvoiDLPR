@@ -86,6 +86,12 @@ Repository **Settings > Secrets and variables > Actions**:
 | Secret | `R2_SECRET_ACCESS_KEY` | from the API token |
 | Variable | `R2_BUCKET` | the bucket name |
 
+The three secrets go under the **Secrets** tab and the bucket name under **Variables**, with
+exactly these names. Both data workflows check them first: if one is missing, the run fails at
+"Check the bucket is set up and reachable" and names it; if they're all there but the bucket
+can't be listed, it says that instead (usually the account ID, or a token scoped to another
+bucket).
+
 ### 4. Publish the data
 
 **Actions > Build map data > Run workflow** (leave "publish" ticked). It builds all 135 areas in
@@ -142,18 +148,22 @@ Every push to `main` redeploys.
 | Tests, type-check, build | every push and pull request | `ci.yml` |
 | App redeploy | every push to `main` | Cloudflare Pages |
 | Camera feeds refreshed from DeFlock | hourly | `refresh-cameras.yml` |
+| Roads updated, changed areas' packs checked and republished | nightly (07:30 UTC) | `build-data.yml` (roads) |
+| Road packs and basemaps rebuilt from fresh downloads | monthly (the 3rd), or on demand | `build-data.yml` (full) |
 | Superseded road packs and basemaps deleted | daily (05:00 UTC), a day after they're replaced | `refresh-cameras.yml` |
-| Road packs and basemaps rebuilt | monthly, or on demand | `build-data.yml` |
 
 Notes:
 - GitHub disables scheduled workflows in a public repository after 60 days with no repository
   activity. If the hourly refresh goes quiet, re-enable it in the Actions tab.
 - The camera refresh won't publish a feed that shrank by more than half, and fails loudly
   instead, so a DeFlock outage can't blank your map.
-- A monthly build that fails for some areas still publishes the rest: those areas keep their
-  current files. Every area is checked against the real state borders first, so one that
+- A build that fails for some areas still publishes the rest: those areas keep their current
+  files. Every area is checked against the real state borders first, so one that
   reaches into a state it doesn't list fails the run instead of shipping with a hole in it.
 - **Build map data** with "publish" unticked is a dry run: it builds and reports, uploads nothing.
+  Its "mode" picks the monthly build (full) or the nightly update (roads).
+- The nightly update's roads live in GitHub's Actions cache (10 GB a repository; old entries
+  are evicted). If they're evicted, the next run downloads those states again.
 
 ## Adding a city
 
@@ -171,39 +181,49 @@ Notes:
 |---|---|---|
 | Pages | 25 MiB per file, 20,000 files, no hard bandwidth cap (fair use) | The app is about 2 MB; big files live in R2 |
 | R2 | 10 GB stored, 1M writes and 10M reads a month, **no egress fees** | The data is about 7 GB, and the daily cleanup keeps one copy. The hourly feeds are about 100,000 writes a month. A map tile is one read; rough guess a few hundred per session, so tens of thousands of sessions a month before reads cost anything (about $0.36 per million after) |
-| GitHub Actions | Free for public repositories | An hourly job of about a minute, and a monthly build of about two hours of runner time (20 minutes on the clock) |
-| Geofabrik, Protomaps | Free downloads, fair use | The monthly build fetches each state once (about 10 GB) and cuts each basemap out of Protomaps' daily planet build |
+| GitHub Actions | Free for public repositories | An hourly job of about a minute, a nightly road update, and a monthly build of about two hours of runner time (20 minutes on the clock) |
+| Geofabrik, Protomaps | Free downloads, fair use | The monthly build fetches each state once (about 10 GB) and cuts each basemap out of Protomaps' daily planet build; the nightly update only fetches Geofabrik's daily change files |
 
 These are from public pricing pages in October 2026 and change; check before relying on them.
 
-## Keeping the data fresh: daily updates (next step)
+## Keeping the data fresh
 
-Today roads and basemaps refresh monthly and cameras hourly. Road edits matter to routing, so
-the next step is updating changed areas daily, without rebuilding the country every night or
-making phones re-download areas whose roads didn't change. The pieces:
+Cameras refresh hourly. Roads are checked every night, and an area's road pack is replaced when
+its roads have changed enough to matter, without downloading the country again and without
+making phones fetch an area whose roads didn't change. The monthly build remains the baseline:
+fresh downloads, new basemaps, and a correction for anything the nightly updates miss.
 
-1. **Find what changed.** A nightly job reads Geofabrik's daily change file for each state
-   (`<state>-updates/`, osmChange, a few MB) and marks an area dirty when it touches a drivable
-   road, a node on one, or a turn restriction inside the area's rectangle. pyosmium reads these
-   files and tracks the sequence numbers. Cameras already refresh hourly.
-2. **Rebuild only those areas**, with the same batch build (`build-data.yml` given a list).
-3. **Publish only real changes.** Give each pack a fingerprint of its routing content (the
-   graph arrays, not the build date). A rebuilt pack that matches the live fingerprint isn't
-   published, so phones only download an area again when routing would come out differently.
-4. **Verify before the switch.** In the job, load each new pack with the TypeScript router and
-   check that it decodes, that its edge count is within a few percent of the live one, and that a
-   handful of fixed test trips still route with similar times. A pack that fails stays out (the
-   area keeps its live file) and the run summary says why.
-5. **Switch, then drop the old file.** Already how it works: `regions.json` moves to the new file
-   in one write, and the daily cleanup deletes the old one once nothing has pointed at it for a
-   day.
-6. **On the phone, keep the old pack until the new one is proven.** The service worker currently
-   drops the old version as soon as the new one is cached. Better: check the new pack's SHA-256
-   against the manifest, decode it in the worker, and only then let go of the old one, routing on
-   the old pack if anything fails. An app left open for hours (a long drive) checks for a new
-   manifest when it's brought back to the screen and swaps packs between trips, never mid-drive.
-
-Basemaps don't need this: their changes are cosmetic, so monthly stays.
+1. **Roll the roads forward.** Each state is kept as its roads only, in GitHub's Actions cache
+   (`pipeline/roads.py`). Every night it takes the change files Geofabrik has published since
+   (a few MB a day per state) from the exact sequence it holds, applies them with pyosmium and
+   filters again. A state with no cached copy, or changes the server no longer has, starts again
+   from a fresh download.
+2. **Rebuild the packs, not the basemaps.** Every area's road pack is rebuilt from the updated
+   roads; basemaps are cosmetic and stay monthly (a brand-new area gets one).
+3. **Same roads, same file.** A pack carries a fingerprint of its routing content (the graph,
+   not the build date). A rebuild with the live fingerprint is *unchanged*: nothing is uploaded
+   and phones keep what they have.
+4. **Check before switching.** A changed pack is loaded next to the live one by the router's own
+   check (`packages/router/bin/verify.ts`): it has to decode, keep its road-edge count within
+   −15%/+20% of the live pack's, and route 40 sample trips in about the same times, with few
+   outliers. One that fails is *held back*: the area keeps its live pack, and the run summary
+   says why.
+5. **Only changes worth a download.** The check also measures the share of road edges that
+   changed. The nightly update republishes an area when that's 1% or more, or when its live pack
+   is a week old; a smaller fix is *deferred* until one of those is true. (A Dallas pack is a
+   12.5 MB download; daily replacements for one-street fixes would cost phones hundreds of MB a
+   month.) Both thresholds are at the top of `pipeline/decide.py`.
+6. **Switch, then drop the old file.** `regions.json` moves to the new files in one write, and
+   only when something changed; the manifest it replaces is kept as `regions.prev.json`. The
+   daily cleanup deletes a pack or basemap once no manifest has named it for a day, and never a
+   file uploaded in the last day.
+7. **On the phone, the old pack stays until the new one is proven.** The app checks a new pack's
+   SHA-256 against the manifest and decodes it; only then does it tell the service worker to drop
+   older versions. A pack that fails is evicted from the cache (so the next try downloads it
+   again) and the app routes on the last good one, saying so. An app left open, or kept in memory
+   as an installed app, looks for news whenever it comes back on screen and every half hour:
+   new cameras apply at once, and a new pack or basemap waits until no trip is being driven or
+   previewed. The panel's footer says how current the roads and cameras are.
 
 ## Security and privacy posture
 
@@ -234,7 +254,8 @@ Basemaps don't need this: their changes are cosmetic, so monthly stays.
 
 ## Known gaps
 
-- The data workflows have been dry-run on GitHub but have never published to a bucket.
+- The data workflows have been dry-run on GitHub (the monthly build, and the nightly update both
+  from a fresh download and rolling cached roads forward) but have never published to a bucket.
 - Areas are separate maps: a trip from one to another (Charlotte to Raleigh) can't be planned
   unless one area holds both ends. Neighbouring areas overlap so most trips inside a metro work;
   routing across the country would need the road network in tiles, loaded along the way.

@@ -11,3 +11,4 @@ export {
   type AlternativeRoutes, type BudgetRoute, type Route, Router, type RouterOptions, type RouteSite, SNAP_MAX_M,
 } from "./router.ts";
 export { EdgeSearch, type Endpoint, NODE_EPS_M, nodeAt, type SearchPath, TURN_COST_S, turnCost } from "./search.ts";
+export { changedShare, LIMITS as VERIFY_LIMITS, type PackSummary, type Verdict, verifyPack } from "./verify.ts";

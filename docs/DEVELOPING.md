@@ -45,8 +45,9 @@ npm run phone -w @flockwatch/web                      # serve to your phone over
 The browser tests in `apps/web/e2e/` run with Playwright against the dev server and the staged
 release: `phone-and-location.cjs` (layout, route options, GPS start, preview), `areas.cjs` (the
 area chooser and switching), `navigate.cjs` (live navigation, fed GPS fixes) and
-`production.cjs` (the production build: headers, CSP, service worker, offline; it needs the two
-servers named at its top). `readme-screenshots.cjs` retakes the screenshots in the README.
+`updates.cjs` (a damaged pack falls back to the last good one; updates go in between trips;
+new cameras apply at once) and `production.cjs` (the production build: headers, CSP, the service
+worker and its update handling, offline; it needs the two servers named at its top). `readme-screenshots.cjs` retakes the screenshots in the README.
 
 ## The areas, and how they're built
 
@@ -65,6 +66,12 @@ To build one area here: `python -m pipeline.build_region <id> --basemap` (downlo
 needs osmium-tool and pmtiles), or `--pbf some.osm.pbf` to use an extract you already have. Then
 refresh the cameras and stage the release as above. The app reads the areas from the release's
 `regions.json`, so a new one needs no app change.
+
+The nightly update (`build-data.yml` in roads mode) keeps each state's roads in the Actions
+cache and rolls them forward with Geofabrik's daily changes (`pipeline/roads.py`). Every pack
+carries a fingerprint of its routing content; `pipeline/decide.py` compares a rebuilt pack with
+the live one (`packages/router/bin/verify.ts` loads both) and decides: unchanged, publish, defer
+or hold. docs/DEPLOY.md, "Keeping the data fresh", has the rules.
 
 Packs leave out unnamed service roads (parking-lot lanes, apartment drives, alleys): they were
 45% of Dallas's edges but almost never part of a sensible route. `build_pack --with-service`

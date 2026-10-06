@@ -93,19 +93,45 @@ def pmtiles_maxzoom(path: Path) -> int | None:
     return head[101] if head.startswith(b"PMTiles") and len(head) == 127 else None
 
 
-def stage_region(region: Region, data: Path, out: Path) -> dict | None:
-    """Stage one region's pack and basemap; returns its manifest entry (None if it isn't built)."""
-    pack, basemap = data / "packs" / f"{region.id}.fwr", data / "basemap" / f"{region.id}.pmtiles"
-    if not (pack.exists() and basemap.exists()):
-        return None
-    header = read_header(pack)
-    gz = out / "packs" / f"{region.id}.fwr.gz.tmp-src"
-    gzip_pack(pack, gz)
-    pack_path, pack_sha = _hashed(gz, out / "packs", region.id, ".fwr.gz")
-    gz.unlink()
-    base_path, base_sha = _hashed(basemap, out / "basemap", region.id, ".pmtiles")
+def stage_region(region: Region, data: Path, out: Path, live: dict | None = None) -> dict | None:
+    """Stage one region's pack and basemap; returns its manifest entry (None if there's nothing to list).
 
-    w, s, e, n = header["bbox"]
+    `live` is the region's entry in the published manifest. A part that wasn't rebuilt (the
+    nightly update builds no basemaps, and leaves out packs it decided not to publish) keeps the
+    live one, and a rebuilt pack with the live pack's fingerprint keeps the live file too, so
+    phones don't download the same roads again.
+    """
+    pack, basemap = data / "packs" / f"{region.id}.fwr", data / "basemap" / f"{region.id}.pmtiles"
+    live_pack, live_base = (live or {}).get("pack"), (live or {}).get("basemap")
+    header = read_header(pack) if pack.exists() else None
+    if header and not (live_pack and header.get("fingerprint") and live_pack.get("fingerprint") == header["fingerprint"]):
+        gz = out / "packs" / f"{region.id}.fwr.gz.tmp-src"
+        gzip_pack(pack, gz)
+        pack_path, pack_sha = _hashed(gz, out / "packs", region.id, ".fwr.gz")
+        gz.unlink()
+        pack_entry = {
+            "path": pack_path.relative_to(out).as_posix(), "encoding": "gzip", "bytes": pack_path.stat().st_size,
+            "raw_bytes": pack.stat().st_size, "sha256": pack_sha, "built_at": header["built_at"],
+            "edges": header["counts"]["edges"], "fingerprint": header.get("fingerprint"),
+            **({"osm_at": header["osm_at"]} if header.get("osm_at") else {}),
+        }
+        w, s, e, n = header["bbox"]
+    elif live_pack:
+        pack_entry = live_pack
+        w, s, e, n = live["bbox"]
+    else:
+        return None
+    if basemap.exists():
+        base_path, base_sha = _hashed(basemap, out / "basemap", region.id, ".pmtiles")
+        base_entry = {
+            "path": base_path.relative_to(out).as_posix(), "bytes": base_path.stat().st_size, "sha256": base_sha,
+            "maxzoom": pmtiles_maxzoom(base_path),
+        }
+    elif live_base:
+        base_entry = live_base
+    else:
+        return None
+
     entry = {
         "id": region.id,
         "name": region.name,
@@ -113,15 +139,8 @@ def stage_region(region: Region, data: Path, out: Path) -> dict | None:
         "states": region.states,
         "bbox": [w, s, e, n],
         "center": [round((w + e) / 2, 5), round((s + n) / 2, 5)],
-        "pack": {
-            "path": pack_path.relative_to(out).as_posix(), "encoding": "gzip", "bytes": pack_path.stat().st_size,
-            "raw_bytes": pack.stat().st_size, "sha256": pack_sha, "built_at": header["built_at"],
-            "edges": header["counts"]["edges"],
-        },
-        "basemap": {
-            "path": base_path.relative_to(out).as_posix(), "bytes": base_path.stat().st_size, "sha256": base_sha,
-            "maxzoom": pmtiles_maxzoom(base_path),
-        },
+        "pack": pack_entry,
+        "basemap": base_entry,
         "cameras": {"path": f"cameras/{region.id}.json"},
     }
     if region.example:
@@ -183,6 +202,12 @@ def assemble(out: Path, regions: list[Region], fresh: list[dict], live: dict | N
     }
 
 
+def same_manifest(a: dict | None, b: dict | None) -> bool:
+    """Whether two manifests list the same files (when they were generated aside)."""
+    strip = lambda m: {k: v for k, v in (m or {}).items() if k != "generated_at"}  # noqa: E731
+    return a is not None and b is not None and strip(a) == strip(b)
+
+
 def write_manifest(out: Path, manifest: dict) -> None:
     out.mkdir(parents=True, exist_ok=True)
     tmp = out / "regions.json.tmp"
@@ -224,13 +249,18 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--part", metavar="NAME", help="stage just --region ... and write parts/NAME.json")
     mode.add_argument("--assemble", action="store_true", help="merge parts/*.json (and --live) into regions.json")
     ap.add_argument("--region", action="append", default=[], help="with --part: a region id (repeatable)")
-    ap.add_argument("--live", type=Path, help="with --assemble: the manifest that's online now, if any")
+    ap.add_argument("--live", type=Path, help="the manifest that's online now, if any: parts reuse its files "
+                                               "for what wasn't rebuilt, and --assemble keeps its other regions")
+    ap.add_argument("--changed-flag", type=Path,
+                    help="with --assemble: write true or false here, whether the manifest differs from --live")
     args = ap.parse_args(argv)
     regions = load_regions()
+    live = json.loads(args.live.read_text(encoding="utf-8")) if args.live and args.live.exists() else None
+    live_by_id = {e["id"]: e for e in (live or {}).get("regions", [])} if (live or {}).get("schema") == SCHEMA else {}
 
     if args.part:
         wanted = set(args.region)
-        entries = [e for r in regions if r.id in wanted and (e := stage_region(r, args.data, args.out))]
+        entries = [e for r in regions if r.id in wanted and (e := stage_region(r, args.data, args.out, live_by_id.get(r.id)))]
         missing = sorted(wanted - {e["id"] for e in entries})
         if missing:
             print(f"not built, so not staged: {', '.join(missing)}", file=sys.stderr)
@@ -239,12 +269,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {path} ({len(entries)} of {len(wanted)} regions)")
         return 0
     if args.assemble:
-        live = json.loads(args.live.read_text(encoding="utf-8")) if args.live and args.live.exists() else None
         if (args.data / "basemap" / "assets").exists():
             stage_assets(args.data, args.out)
         manifest = assemble(args.out, regions, read_parts(args.out), live)
+        changed = not same_manifest(manifest, live)
+        if not changed:
+            manifest = live  # keep its date: nothing new to announce
         write_manifest(args.out, manifest)
-        print(f"wrote {args.out / 'regions.json'}: {len(manifest['regions'])} regions")
+        if args.changed_flag:
+            args.changed_flag.write_text("true" if changed else "false", encoding="utf-8")
+        print(f"wrote {args.out / 'regions.json'}: {len(manifest['regions'])} regions"
+              + ("" if changed else ", the same as what's online"))
         return 0
     manifest = stage_release(args.data, args.out, regions)
     _summary(manifest)

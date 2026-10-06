@@ -1,24 +1,31 @@
-"""Build every region in one batch: road packs and basemaps, from fresh OpenStreetMap data.
+"""Build every region in one batch: road packs (and basemaps), and decide which to publish.
 
-Usage: python -m pipeline.build_batch <batch> [--region ID ...] [--work work] [--data data]
+Usage: python -m pipeline.build_batch <batch> [--region ID ...] [--mode full|roads]
+                                      [--live regions.json] [--work work] [--data data]
                                       [--report report.json] [--no-basemap]
 
-1. Download each state extract the batch needs, once, and keep only drivable roads and turn
-   restrictions (`osmium tags-filter`), which makes them several times smaller.
+1. Get each state the batch needs, once, as drivable roads and turn restrictions (pipeline/roads.py).
+   `--mode full` (the monthly build) downloads every state fresh. `--mode roads` (the nightly
+   update) rolls the cached copy forward with the day's changes, and only downloads a state it
+   has no copy of.
 2. Merge them (border roads appear in both neighbours and are kept once) and cut each region out
    (`osmium extract`, keeping ways whole where they cross the edge). One region per pass: cutting
    a dozen at once keeps a dozen sets of ids in memory, which ran a runner out of its 16 GB.
-3. Build each region's road pack (pipeline.build_pack -> data/packs/<id>.fwr) and basemap
-   (apps/web/scripts/fetch-basemap.mjs -> data/basemap/<id>.pmtiles).
+3. Build each region's road pack (pipeline.build_pack -> data/packs/<id>.fwr) and decide whether it
+   replaces the live one (pipeline/decide.py: unchanged, publish, defer or hold). A pack that isn't
+   published is deleted, so staging keeps the live one.
+4. Basemaps (apps/web/scripts/fetch-basemap.mjs -> data/basemap/<id>.pmtiles): in full mode for
+   every region being published or unchanged; in roads mode only for a region with none online.
 
 A region that fails, or comes out too big for a phone, is reported and left out; the rest of the
-batch still builds. The report lists every region's sizes and timings, and the build workflow
-turns it into the run's summary. Needs osmium-tool, curl, node and the pmtiles CLI.
+batch still builds. The report lists every region's outcome, size and timing, and the build
+workflow turns it into the run's summary. Needs osmium-tool, curl, node and the pmtiles CLI.
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import subprocess
 import sys
@@ -27,12 +34,12 @@ import traceback
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from . import build_pack
+from . import build_pack, roads
+from .decide import Decision, decide
 from .deflock import http_get
-from .osm_graph import HIGHWAY_CLASSES
 from .pack import read_header
 from .plan import plan
-from .regions import Region, geofabrik_url, load_regions
+from .regions import Region, load_regions
 
 #: A region with more road edges than this is too heavy for a phone (download, memory, time to
 #: load): the build leaves it out, and its clip_bbox should shrink or the region split in two.
@@ -44,24 +51,12 @@ BASEMAP_SCRIPT = ROOT / "apps" / "web" / "scripts" / "fetch-basemap.mjs"
 BUILDS_INDEX = "https://build-metadata.protomaps.dev/builds.json"
 
 Run = Callable[[Sequence[str]], None]
+Decide = Callable[..., Decision]
 
 
 def run_checked(cmd: Sequence[str]) -> None:
     print("+", " ".join(str(c) for c in cmd), flush=True)
     subprocess.run([str(c) for c in cmd], check=True)
-
-
-def slug(path: str) -> str:
-    return path.replace("/", "_")
-
-
-def download_command(url: str, target: Path) -> list[str]:
-    return ["curl", "-fL", "--retry", "5", "--retry-delay", "10", "--retry-all-errors", "-o", str(target), url]
-
-
-def filter_command(source: Path, target: Path) -> list[str]:
-    return ["osmium", "tags-filter", str(source), f"w/highway={','.join(HIGHWAY_CLASSES)}", "r/type=restriction",
-            "--overwrite", "-o", str(target)]
 
 
 def merge_command(sources: Sequence[Path], target: Path) -> list[str]:
@@ -88,33 +83,36 @@ def latest_basemap_build(fetch=http_get) -> str:
     return keys[-1]
 
 
-def prepare_sources(sources: Sequence[str], work: Path, run: Run) -> Path:
-    """Download and road-filter each extract, merge them, and return the merged file."""
-    roads = []
+def prepare_sources(sources: Sequence[str], work: Path, run: Run, mode: str = "full",
+                    updater: Callable[..., tuple[dict, bool]] = roads.update,
+                    downloader: Callable[..., dict] = roads.fresh, rewind: int = 0) -> tuple[Path, dict[str, str | None]]:
+    """Each state's roads, merged; returns (the merged file, {extract: when its data is from})."""
+    files, when = [], {}
     for path in sources:
-        raw = work / "src" / f"{slug(path)}.osm.pbf"
-        filtered = work / "roads" / f"{slug(path)}.osm.pbf"
-        filtered.parent.mkdir(parents=True, exist_ok=True)
-        if not filtered.exists():
-            raw.parent.mkdir(parents=True, exist_ok=True)
-            if not raw.exists():
-                run(download_command(geofabrik_url(path), raw))
-            run(filter_command(raw, filtered))
-            raw.unlink(missing_ok=True)  # the runner's disk is small; only the roads are needed
-        roads.append(filtered)
-    if len(roads) == 1:
-        return roads[0]
-    merged = work / "roads" / "merged.osm.pbf"
-    run(merge_command(roads, merged))
-    return merged
+        state = updater(path, work, run, rewind=rewind)[0] if mode == "roads" else downloader(path, work, run)
+        files.append(roads.roads_file(work, path))
+        when[path] = state.get("timestamp")
+    if len(files) == 1:
+        return files[0], when
+    merged = work / "merged.osm.pbf"
+    run(merge_command(files, merged))
+    return merged, when
 
 
-def build_batch(regions: Sequence[Region], work: Path, data: Path, *, run: Run = run_checked,
-                basemap_build: str | None = None, basemaps: bool = True) -> list[dict]:
-    """Build every region; returns one report row per region (`ok` False when it was left out)."""
+def build_batch(regions: Sequence[Region], work: Path, data: Path, *, run: Run = run_checked, mode: str = "full",
+                live: dict | None = None, basemap_build: str | None = None, basemaps: bool = True,
+                decider: Decide | None = decide, now: dt.datetime | None = None, rewind: int = 0,
+                **prepare) -> list[dict]:
+    """Build every region; returns one report row per region (`ok` False when it failed).
+
+    `live` is the published regions.json, if there is one. `decider=None` publishes every pack
+    (a local build). `prepare` passes test doubles through to prepare_sources.
+    """
     work.mkdir(parents=True, exist_ok=True)
-    sources = [g for r in regions for g in r.geofabrik]
-    merged = prepare_sources(list(dict.fromkeys(sources)), work, run)
+    now = now or dt.datetime.now(dt.UTC)
+    live_by_id = {e["id"]: e for e in (live or {}).get("regions", [])}
+    merged, when = prepare_sources(list(dict.fromkeys(g for r in regions for g in r.geofabrik)), work, run, mode,
+                                   rewind=rewind, **prepare)
     clips = work / "regions"
     clips.mkdir(parents=True, exist_ok=True)
 
@@ -123,28 +121,40 @@ def build_batch(regions: Sequence[Region], work: Path, data: Path, *, run: Run =
         row: dict = {"id": r.id, "name": r.name, "batch": r.batch, "ok": False}
         t0 = time.perf_counter()
         pack, clip = data / "packs" / f"{r.id}.fwr", clips / f"{r.id}.osm.pbf"
+        stamps = [when[g] for g in r.geofabrik if when.get(g)]
+        osm_at = min(stamps) if stamps else None  # the area is as current as its stalest state
         try:
             run(extract_command(r, merged, clip))
-            build_pack.main([str(clip), str(pack)])
+            build_pack.main([str(clip), str(pack), *(["--osm-at", osm_at] if osm_at else [])])
             clip.unlink(missing_ok=True)
             counts = read_header(pack)["counts"]
-            row.update(nodes=counts["nodes"], edges=counts["edges"], pack_bytes=pack.stat().st_size)
+            row.update(nodes=counts["nodes"], edges=counts["edges"], pack_bytes=pack.stat().st_size, osm_at=osm_at)
             if counts["edges"] > MAX_EDGES:
                 pack.unlink()
                 raise RuntimeError(f"too big for a phone: {counts['edges']:,} road edges (limit {MAX_EDGES:,}); "
                                    "shrink its clip_bbox or split it")
             if counts["edges"] > WARN_EDGES:
                 row["warning"] = f"{counts['edges']:,} road edges is on the heavy side"
-            if basemaps:
+
+            entry = live_by_id.get(r.id)
+            decision = decider(r.id, pack, entry, mode=mode, now=now) if decider else Decision("publish", "local build")
+            row.update(status=decision.action, why=decision.why, changed=decision.changed)
+            if decision.action != "publish":
+                pack.unlink(missing_ok=True)  # staging keeps the live pack
+
+            wants_basemap = basemaps and (decision.action in ("publish", "unchanged") if mode == "full" else entry is None)
+            if wants_basemap and decision.action != "hold":
                 run(basemap_command(r.id, basemap_build or latest_basemap_build()))
                 row["basemap_bytes"] = (data / "basemap" / f"{r.id}.pmtiles").stat().st_size
             row["ok"] = True
         except Exception as e:  # noqa: BLE001 - one bad region mustn't sink the batch
             row["error"] = f"{type(e).__name__}: {e}"
+            row["status"] = "failed"
             traceback.print_exc()
         row["seconds"] = round(time.perf_counter() - t0, 1)
         report.append(row)
-        print(f"{r.id}: {'ok' if row['ok'] else 'FAILED ' + row['error']}", flush=True)
+        print(f"{r.id}: {row['status']}" + (f" ({row.get('why') or row.get('error')})" if row.get("why") or row.get("error") else ""),
+              flush=True)
     return report
 
 
@@ -152,10 +162,15 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("batch", help="a batch name from `python -m pipeline.plan`")
     ap.add_argument("--region", action="append", help="only these regions of the batch (repeatable)")
+    ap.add_argument("--mode", choices=("full", "roads"), default="full",
+                    help="full: fresh downloads and basemaps (monthly); roads: roll the cached roads forward (nightly)")
+    ap.add_argument("--live", type=Path, help="the published regions.json, to compare with")
     ap.add_argument("--work", type=Path, default=Path("work"), help="scratch directory for downloads")
     ap.add_argument("--data", type=Path, default=Path("data"))
     ap.add_argument("--report", type=Path, help="write the per-region report here (JSON)")
     ap.add_argument("--no-basemap", action="store_true", help="road packs only")
+    ap.add_argument("--rewind", type=int, default=0,
+                    help="roads mode: re-apply this many of the latest change files (harmless; for testing)")
     args = ap.parse_args(argv)
 
     batches = {b["batch"]: b for b in plan(load_regions())}
@@ -167,14 +182,18 @@ def main(argv: list[str] | None = None) -> int:
     if not regions:
         print(f"none of {sorted(wanted)} is in batch {args.batch!r}", file=sys.stderr)
         return 2
+    live = json.loads(args.live.read_text(encoding="utf-8")) if args.live and args.live.exists() else None
     build = None if args.no_basemap else latest_basemap_build()
-    report = build_batch(regions, args.work, args.data, basemap_build=build, basemaps=not args.no_basemap)
+    report = build_batch(regions, args.work, args.data, mode=args.mode, live=live, basemap_build=build,
+                         basemaps=not args.no_basemap, rewind=args.rewind)
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
-        args.report.write_text(json.dumps({"batch": args.batch, "basemap_build": build, "regions": report}, indent=2),
-                               encoding="utf-8")
+        args.report.write_text(json.dumps({"batch": args.batch, "mode": args.mode, "basemap_build": build,
+                                           "regions": report}, indent=2), encoding="utf-8")
     failed = [row["id"] for row in report if not row["ok"]]
-    print(f"{len(report) - len(failed)} of {len(report)} regions built" + (f"; failed: {', '.join(failed)}" if failed else ""))
+    counts = {s: sum(1 for row in report if row.get("status") == s) for s in ("publish", "unchanged", "defer", "hold")}
+    print(f"{len(report) - len(failed)} of {len(report)} regions built: " + ", ".join(f"{n} {s}" for s, n in counts.items() if n)
+          + (f"; failed: {', '.join(failed)}" if failed else ""))
     return 0 if len(failed) < len(report) else 1
 
 

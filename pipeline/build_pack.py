@@ -44,12 +44,13 @@ def main(argv: list[str] | None = None) -> None:
                          "`python -m pipeline.refresh_cameras` instead")
     ap.add_argument("--with-service", action="store_true",
                     help="keep service roads (alleys, parking-lot lanes); packs leave them out by default")
+    ap.add_argument("--osm-at", help="when the OpenStreetMap data was current (ISO 8601), recorded in the pack")
     args = ap.parse_args(argv)
 
     t0 = time.perf_counter()
     graph = build_graph(args.extract, include_service=args.with_service)
     built_at = dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
-    meta = pack_meta(graph, args.extract.name, built_at)
+    meta = pack_meta(graph, args.extract.name, built_at, args.osm_at)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     size = write_pack(args.out, meta, pack_sections(graph))
     print(f"{args.out}: {size / 1e6:.1f} MB  {json.dumps(meta['counts'])}  [{time.perf_counter() - t0:.1f}s]")

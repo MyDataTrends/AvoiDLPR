@@ -24,11 +24,27 @@ def mb(n: float | None) -> str:
     return "" if n is None else f"{n / 1e6:.1f}"
 
 
+#: How each outcome reads in the summary (pipeline/decide.py).
+OUTCOMES = {"publish": "published", "unchanged": "unchanged", "defer": "deferred", "hold": "held back",
+            "failed": "failed"}
+
+
+def outcome(row: dict) -> str:
+    status = row.get("status") or ("publish" if row.get("ok") else "failed")
+    changed = row.get("changed")
+    detail = f"{changed:.2%} changed" if isinstance(changed, (int, float)) and status != "unchanged" else ""
+    return OUTCOMES.get(status, status) + (f" ({detail})" if detail else "")
+
+
 def render(reports: list[dict], manifest: dict | None, release: Path) -> str:
     listed = {e["id"]: e for e in (manifest or {}).get("regions", [])}
     rows = [row for rep in reports for row in rep["regions"]]
     failed = [r for r in rows if not r["ok"]]
-    out = [f"## Map data build: {len(rows) - len(failed)} of {len(rows)} regions built", ""]
+    modes = {rep.get("mode") for rep in reports} - {None}
+    kind = "Nightly road update" if modes == {"roads"} else "Map data build"
+    counts = {s: sum(1 for r in rows if r.get("status") == s) for s in ("publish", "unchanged", "defer", "hold")}
+    tally = ", ".join(f"{n} {OUTCOMES[s]}" for s, n in counts.items() if n)
+    out = [f"## {kind}: {len(rows) - len(failed)} of {len(rows)} regions built" + (f" ({tally})" if tally else ""), ""]
     if manifest:
         packs = sum(e["pack"]["bytes"] for e in listed.values())
         basemaps = sum(e["basemap"]["bytes"] for e in listed.values())
@@ -44,13 +60,18 @@ def render(reports: list[dict], manifest: dict | None, release: Path) -> str:
         out.append("")
     if failed:
         out += ["### Failed", ""] + [f"- **{r['id']}** ({r['batch']}): {r.get('error', '?')}" for r in failed] + [""]
+    held = [r for r in rows if r.get("status") == "hold"]
+    if held:
+        out += ["### Held back (the live pack stays)", ""] + [f"- **{r['id']}**: {r.get('why', '?')}" for r in held] + [""]
     warned = [r for r in rows if r.get("warning")]
     if warned:
         out += ["### Heavy", ""] + [f"- **{r['id']}**: {r['warning']}" for r in warned] + [""]
 
-    out += ["| Region | Batch | Road edges | Pack MB (gzip) | Basemap MB (zoom) | Cameras | Build s |",
-            "|---|---|--:|--:|--:|--:|--:|"]
-    order = sorted(rows, key=lambda r: (r["ok"], -(r.get("edges") or 0)))
+    out += ["| Region | Outcome | Batch | Road edges | Pack MB (gzip) | Basemap MB (zoom) | Cameras | Build s |",
+            "|---|---|---|--:|--:|--:|--:|--:|"]
+    rank = {"failed": 0, "hold": 1, "publish": 2, "defer": 3, "unchanged": 4}
+    order = sorted(rows, key=lambda r: (rank.get(r.get("status") or ("publish" if r["ok"] else "failed"), 5),
+                                        -(r.get("edges") or 0)))
     for r in order:
         e = listed.get(r["id"])
         feed = release / "cameras" / f"{r['id']}.json"
@@ -61,8 +82,8 @@ def render(reports: list[dict], manifest: dict | None, release: Path) -> str:
         gz = mb(e["pack"]["bytes"]) if e else ""
         zoom = f" (z{e['basemap']['maxzoom']})" if e and e["basemap"].get("maxzoom") is not None else ""
         status = "" if r["ok"] else " ❌"
-        out.append(f"| {r['name']}{status} | {r['batch']} | {edges} | {gz} | {mb(r.get('basemap_bytes'))}{zoom} | "
-                   f"{'' if cams is None else cams} | {r.get('seconds', '')} |")
+        out.append(f"| {r['name']}{status} | {outcome(r)} | {r['batch']} | {edges} | {gz} | "
+                   f"{mb(r.get('basemap_bytes'))}{zoom} | {'' if cams is None else cams} | {r.get('seconds', '')} |")
     return "\n".join(out) + "\n"
 
 

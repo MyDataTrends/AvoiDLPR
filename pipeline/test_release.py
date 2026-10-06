@@ -267,7 +267,7 @@ def test_a_batch_downloads_each_state_once_merges_and_survives_a_bad_region(tmp_
     monkeypatch.setattr(build_batch.build_pack, "main", build)
     calls: list[list[str]] = []
     report = build_batch.build_batch([a, b, big], tmp_path / "work", tmp_path / "data",
-                                     run=_fake_runner(_grid_pbf(tmp_path), calls), basemaps=False)
+                                     run=_fake_runner(_grid_pbf(tmp_path), calls), basemaps=False, decider=None)
     downloads = [c[-1] for c in calls if c[0] == "curl"]
     assert downloads == ["https://download.geofabrik.de/north-america/us/north-carolina-latest.osm.pbf",
                          "https://download.geofabrik.de/north-america/us/south-carolina-latest.osm.pbf"]
@@ -296,17 +296,19 @@ def test_plan_groups_regions_by_home_state_batch():
         plan(regions, "nowhere")
 
 
-def test_prune_lists_unreferenced_files_once_the_manifest_has_settled():
+def test_prune_deletes_what_no_manifest_has_named_for_a_day():
     import datetime as dt
 
     from pipeline.prune import parse_listing, stale_keys
 
     manifest = {"generated_at": "2026-10-01T00:00:00+00:00", "regions": [_entry("a")]}
+    previous = {"generated_at": "2026-09-01T00:00:00+00:00", "regions": [_entry("a", "old")]}
     listing = parse_listing("\n".join([
         "packs/a.new.fwr.gz\t2026-10-01T00:00:00.000Z",
         "packs/a.old.fwr.gz\t2026-09-01T00:00:00.000Z",
         "basemap/a.new.pmtiles\t2026-10-01T00:00:00.000Z",
         "basemap/a.old.pmtiles\t2026-09-01T00:00:00.000Z",
+        "packs/a.older.fwr.gz\t2026-08-01T00:00:00.000Z",  # named by neither manifest
         "basemap/assets/fonts/x.pbf\t2026-01-01T00:00:00.000Z",
         "packs/b.uploading.fwr.gz\t2026-10-01T23:30:00.000Z",  # a build that hasn't published yet
         "packs/c.untimed.fwr.gz",
@@ -316,10 +318,13 @@ def test_prune_lists_unreferenced_files_once_the_manifest_has_settled():
     ]))
     soon = dt.datetime(2026, 10, 1, 12, tzinfo=dt.UTC)
     later = dt.datetime(2026, 10, 2, 1, tzinfo=dt.UTC)
-    assert stale_keys(manifest, listing, now=soon, min_age_hours=24) == []
-    # The superseded pair goes; the live files, the fonts, a fresh upload and a file of unknown
-    # age all stay.
-    assert stale_keys(manifest, listing, now=later, min_age_hours=24) == ["basemap/a.old.pmtiles", "packs/a.old.fwr.gz"]
+    # Half a day after the switch the previous manifest's files are still in their grace day.
+    assert stale_keys(manifest, listing, now=soon, min_age_hours=24, previous=previous) == ["packs/a.older.fwr.gz"]
+    # A day on they go too; the live files, the fonts, a fresh upload and a file of unknown age stay.
+    assert stale_keys(manifest, listing, now=later, min_age_hours=24, previous=previous) == [
+        "basemap/a.old.pmtiles", "packs/a.old.fwr.gz", "packs/a.older.fwr.gz"]
+    # Without the previous manifest there's no grace to give.
+    assert "packs/a.old.fwr.gz" in stale_keys(manifest, listing, now=soon, min_age_hours=24)
 
 
 def test_report_puts_failures_first_and_totals_the_bucket(tmp_path):

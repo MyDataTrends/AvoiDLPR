@@ -4,8 +4,9 @@
 // What is cached, and why:
 //   app shell      precached per build, cache-first: the app opens instantly and offline.
 //   road packs     cache-first once fetched: a few MB each, content-hashed so a name never
-//                  changes meaning. Older versions of the same area are dropped, and only the
-//                  last few areas opened are kept.
+//                  changes meaning. When the page says a new one loaded ("pack-ok": it matched
+//                  its checksum and decoded), older versions of that area are dropped, and only
+//                  the last few areas are kept. Until then the old one stays, as the fallback.
 //   fonts/sprites  cache-first: immutable.
 //   regions.json   network-first with a cached fallback: it says which pack is current.
 //   camera feeds   network-first with a cached fallback: they change hourly.
@@ -38,6 +39,15 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("message", (event) => {
   if (event.data === "skipWaiting") self.skipWaiting();
+  if (event.data?.type === "pack-ok" && typeof event.data.url === "string") {
+    const url = new URL(event.data.url);
+    if (isPack(url)) event.waitUntil(caches.open(DATA_CACHE).then((cache) => dropOtherVersions(cache, url)));
+  }
+  // A pack that failed its checksum or didn't decode: drop the copy, so the next try downloads it.
+  if (event.data?.type === "pack-bad" && typeof event.data.url === "string") {
+    const url = new URL(event.data.url);
+    if (isPack(url)) event.waitUntil(caches.open(DATA_CACHE).then((cache) => cache.delete(url.href, { ignoreVary: true })));
+  }
 });
 
 const isPack = (url) => /\/packs\/[^/]+\.fwr(\.gz)?$/.test(url.pathname);
@@ -65,23 +75,18 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (isPack(url) || isStaticAsset(url)) {
-    event.respondWith(cacheFirst(event, request, isPack(url) ? url : null));
+    event.respondWith(cacheFirst(event, request));
   } else if (isMutableData(url)) {
     event.respondWith(networkFirst(event, request));
   }
 });
 
-async function cacheFirst(event, request, packUrl) {
+async function cacheFirst(event, request) {
   const cache = await caches.open(DATA_CACHE);
   const hit = await cache.match(request, { ignoreVary: true });
   if (hit) return hit;
   const response = await fetch(request);
-  if (response.ok) {
-    event.waitUntil((async () => {
-      await cache.put(request, response.clone());
-      if (packUrl) await dropOtherVersions(cache, packUrl);
-    })());
-  }
+  if (response.ok) event.waitUntil(cache.put(request, response.clone()));
   return response;
 }
 

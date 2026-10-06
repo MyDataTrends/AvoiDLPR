@@ -179,7 +179,7 @@ const sheet = new Sheet($("panel"), $("sheetHead"), $("handle"), (px) => {
   syncMapPadding(true);
 });
 // Dev-only handle for poking at the page from the console and browser tests.
-if (import.meta.env.DEV) Object.assign(window, { __fw: { map, state, sheet } });
+if (import.meta.env.DEV) Object.assign(window, { __fw: { map, state, sheet, checkForUpdates } });
 
 const markers = {
   from: pinMarker("#2f9e44", "from"),
@@ -310,7 +310,11 @@ worker.onmessage = (ev: MessageEvent<Response>) => {
     const s = msg.stats;
     setStatus(`${s.nodes.toLocaleString()} intersections · ${s.cameras.toLocaleString()} cameras · `
       + `${s.packMB.toFixed(0)} MB network loaded in ${(s.loadMs / 1000).toFixed(1)} s`);
-    requestRoute();
+    renderFreshness(s);
+    packLoaded(msg.pack);
+    // New cameras mid-drive update the live zone checks, but don't re-plan the trip under you.
+    if (state.nav) render();
+    else requestRoute();
   } else if (msg.type === "route") {
     if (msg.id !== state.routeId) return;
     state.routes = msg.routes;
@@ -331,6 +335,7 @@ worker.onmessage = (ev: MessageEvent<Response>) => {
     if (following && msg.id === following.queryId) following.inZone = msg.sites;
   } else {
     state.routing = false;
+    if (msg.badPack) forgetPack(msg.badPack);
     setStatus(`Error: ${msg.message}`);
   }
 };
@@ -667,6 +672,7 @@ function stopDrive(message?: string): void {
   cancelAnimationFrame(d.raf);
   state.drive = null;
   overlays?.setCar(null);
+  queueMicrotask(applyUpdates);
   $("drive").textContent = "Preview drive";
   if (state.sheetBeforeDrive && sheet.isSheet) sheet.set(state.sheetBeforeDrive);
   state.sheetBeforeDrive = null;
@@ -843,6 +849,7 @@ function stopNav(message?: string): void {
   void nav.wake?.release().catch(() => {});
   state.nav = null;
   overlays?.setCar(null);
+  queueMicrotask(applyUpdates);
   if (state.sheetBeforeDrive && sheet.isSheet) sheet.set(state.sheetBeforeDrive);
   state.sheetBeforeDrive = null;
   render();
@@ -871,6 +878,114 @@ function syncNavButtons(haveRoute: boolean): void {
 document.addEventListener("visibilitychange", () => {
   if (state.nav && document.visibilityState === "visible" && !state.nav.wake) void keepAwake(state.nav);
 });
+
+// ---------- keeping the data current ----------
+//
+// Road packs are replaced now and then (pipeline/decide.py), basemaps monthly and camera feeds
+// hourly. An app left open, or kept in memory as an installed app, looks for news whenever it
+// comes back on screen (and every half hour while it's on): new cameras apply at once; a new
+// pack or basemap waits until no trip is being driven or previewed.
+//
+// A new pack only becomes the one to keep once it has downloaded, matched its checksum and
+// decoded. Until then the service worker holds on to the last one that did, and the worker falls
+// back to it, so a bad download never leaves an area without a map.
+
+/** The area's manifest entry as loaded now (it changes when a new pack is swapped in). */
+let current: RegionEntry = region;
+/** Updates found during a trip wait for it to end. */
+const pending = { pack: null as RegionEntry | null, reload: false };
+const CHECK_EVERY_MS = 30 * 60_000;
+let checkedAt = Date.now();
+let lastPackUrl = "";
+
+const packKey = (id: string) => `avoidlpr.pack.${id}`;
+
+function lastGoodPack(id: string): { path: string; sha256?: string } | null {
+  try {
+    return JSON.parse(localStorage.getItem(packKey(id)) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+function loadPack(entry: RegionEntry): void {
+  const good = lastGoodPack(entry.id);
+  send({
+    type: "load", packUrl: dataUrl(entry.pack.path), packBytes: entry.pack.bytes, packSha256: entry.pack.sha256,
+    camerasUrl: dataUrl(entry.cameras.path), profile: state.profile,
+    fallback: good && good.path !== entry.pack.path ? { url: dataUrl(good.path), sha256: good.sha256 } : null,
+  });
+}
+
+/** A pack loaded: remember it as the one to fall back on, and let the service worker drop older ones. */
+function packLoaded(pack: { url: string; fellBack: boolean; failed?: string }): void {
+  if (pack.url === lastPackUrl) return; // a camera refresh or a zone-model change, not a new pack
+  lastPackUrl = pack.url;
+  if (pack.failed) forgetPack(pack.failed);
+  if (pack.fellBack) {
+    state.notice = "The updated road map for this area didn't load, so this is the previous one. It'll try again later.";
+    return;
+  }
+  try {
+    localStorage.setItem(packKey(current.id), JSON.stringify({ path: current.pack.path, sha256: current.pack.sha256 }));
+  } catch {
+    /* storage blocked: there's just no fallback next time */
+  }
+  navigator.serviceWorker?.controller?.postMessage({ type: "pack-ok", url: pack.url });
+}
+
+/** A pack that failed its checks: out of the service worker's cache, so the next try downloads it again. */
+function forgetPack(url: string): void {
+  navigator.serviceWorker?.controller?.postMessage({ type: "pack-bad", url });
+}
+
+async function checkForUpdates(force = false): Promise<void> {
+  if (!force && Date.now() - checkedAt < CHECK_EVERY_MS) return;
+  checkedAt = Date.now();
+  let latest;
+  try {
+    latest = await loadManifest();
+  } catch {
+    return; // offline, or the host is down: try again next time
+  }
+  const entry = latest.regions.find((r) => r.id === current.id);
+  if (entry && entry.basemap.path !== current.basemap.path) pending.reload = true;
+  else if (entry && entry.pack.path !== current.pack.path) pending.pack = entry;
+  if (state.stats) send({ type: "cameras", camerasUrl: dataUrl(current.cameras.path) });
+  applyUpdates();
+}
+
+/** Swap in what checkForUpdates found, if no trip is being driven or previewed. */
+function applyUpdates(): void {
+  if (state.nav || state.drive) return;
+  if (pending.reload) {
+    location.reload(); // a new basemap: the map's tile source is set at start-up
+    return;
+  }
+  if (pending.pack) {
+    current = pending.pack;
+    pending.pack = null;
+    state.stats = null;
+    state.routes = null;
+    loadPack(current);
+    render();
+  }
+}
+
+function renderFreshness(s: Stats): void {
+  const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const time = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const parts = [s.osmAt && `roads as of ${day(s.osmAt)}`, s.camerasAt && `cameras as of ${time(s.camerasAt)}`].filter(Boolean);
+  $("freshness").hidden = !parts.length;
+  $("freshness").textContent = parts.length ? `Map data: ${parts.join(", ")}.` : "";
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") void checkForUpdates();
+});
+setInterval(() => {
+  if (document.visibilityState === "visible") void checkForUpdates();
+}, CHECK_EVERY_MS);
 
 // ---------- current location ----------
 
@@ -1053,9 +1168,6 @@ window.addEventListener("appinstalled", () => void ($("install").hidden = true))
 
 readHash();
 writeHash(); // tidies the link: an area id with no pins in it isn't worth keeping in the URL
-send({
-  type: "load", packUrl: dataUrl(region.pack.path), packBytes: region.pack.bytes, camerasUrl: dataUrl(region.cameras.path),
-  profile: state.profile,
-});
+loadPack(current);
 render();
 if (takeFlag(LOCATE_AFTER_SWITCH)) void useMyLocation();

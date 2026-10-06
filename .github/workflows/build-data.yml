@@ -1,35 +1,52 @@
 name: Build map data
 
-# Monthly (and on demand): rebuild every region's road pack and basemap from fresh OpenStreetMap
-# and Protomaps data, refresh the cameras, and publish the lot to the data bucket.
+# One pipeline, two schedules:
+#
+#   monthly  (the 3rd, 06:00 UTC)  full: every state downloaded fresh, every road pack and basemap
+#                                  rebuilt; the baseline that corrects any drift.
+#   nightly  (07:30 UTC)           roads: each state's cached roads rolled forward with Geofabrik's
+#                                  daily changes (a few MB), road packs rebuilt, basemaps left.
 #
 #   plan     checks every region lists the states it reaches into (pipeline/check_regions.py)
 #            and splits the regions into batches of neighbouring states (pipeline/plan.py).
-#   build    one job per batch, in parallel: downloads its states once, builds its regions and
-#            uploads their packs and basemaps. Those have new content-hashed names, so nothing
-#            the app uses changes yet.
-#   publish  refreshes the cameras, merges the batches with the manifest that's online (a region
-#            that failed or wasn't rebuilt keeps its current files), then uploads the camera feeds
-#            and, last, regions.json: the moment the app starts using the new data.
+#   build    one job per batch, in parallel. Builds its regions and decides, region by region,
+#            whether the new pack replaces the live one (pipeline/decide.py): unchanged (same
+#            fingerprint), published, deferred (a small change to a recent pack, so phones don't
+#            re-download every fix), or held back (it failed the router's checks against the live
+#            pack). Uploads what's published under new content-hashed names: nothing the app uses
+#            changes yet.
+#   publish  merges the batches with the manifest that's online (anything not published keeps
+#            its live files), refreshes the cameras, and uploads regions.json only if it changed,
+#            keeping the one it replaces as regions.prev.json for the daily cleanup's grace period.
 #
 # Without the bucket (the R2_BUCKET variable), or with "publish" unticked, it's a dry run: it all
-# builds, the run's summary page lists every region's sizes, and nothing is uploaded.
+# builds and the run's summary page lists every region's outcome and size; nothing is uploaded.
 #
 # Needs these in the repository's Settings > Secrets and variables > Actions:
 #   secrets:   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
 #   variables: R2_BUCKET, and optionally PMTILES_SHA256 (see the pmtiles step)
 on:
   schedule:
-    - cron: "0 6 3 * *"
+    - cron: "0 6 3 * *" # full
+    - cron: "30 7 * * *" # roads
   workflow_dispatch:
     inputs:
       region:
         description: "Region id to build (default: every region in pipeline/regions.json)"
         required: false
+      mode:
+        description: "full: fresh downloads and basemaps (the monthly build); roads: the nightly update"
+        type: choice
+        options: [full, roads]
+        default: full
       publish:
         description: "Upload to the bucket (untick for a dry run)"
         type: boolean
         default: true
+      rewind:
+        description: "roads mode: re-apply this many of the latest daily change files (harmless; for testing)"
+        required: false
+        default: "0"
 
 permissions:
   contents: read
@@ -47,18 +64,21 @@ env:
   AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
   R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
   R2_BUCKET: ${{ vars.R2_BUCKET }}
+  MODE: ${{ (github.event.schedule == '30 7 * * *' && 'roads') || inputs.mode || 'full' }}
   # "true" when the bucket is set up, unless a manual run unticked "publish".
   PUBLISH: ${{ vars.R2_BUCKET != '' && (github.event_name != 'workflow_dispatch' || inputs.publish) }}
   PMTILES_VERSION: "1.31.2"
 
 jobs:
   plan:
-    # The monthly run waits for the bucket; a manual run always goes (as a dry run without it).
+    # The scheduled runs wait for the bucket; a manual run always goes (as a dry run without it).
     if: vars.R2_BUCKET != '' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      # "success" when the bucket can be read: only then is the live manifest compared with.
+      bucket: ${{ steps.bucket.outcome }}
     steps:
       - uses: actions/checkout@v7
 
@@ -70,9 +90,12 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      # With a bucket, say now if it can't be used, not after the build.
+      # With a bucket, say now if it can't be used, not after the build. A run that publishes
+      # stops here; a dry run carries on without it, treating every region as new.
       - name: Check the bucket is set up and reachable
+        id: bucket
         if: env.R2_BUCKET != ''
+        continue-on-error: ${{ env.PUBLISH != 'true' }}
         run: bash .github/scripts/check-bucket.sh
 
       - name: Check each region lists every state it reaches into
@@ -129,31 +152,61 @@ jobs:
           mkdir -p "$HOME/bin" && tar -xzf pmtiles.tar.gz -C "$HOME/bin" pmtiles
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
+      # What's online decides what's new, unchanged or worth replacing.
+      - name: Download the live manifest
+        if: needs.plan.outputs.bucket == 'success'
+        run: |
+          mkdir -p live
+          aws s3 cp "s3://$R2_BUCKET/regions.json" live/regions.json --endpoint-url "$R2_ENDPOINT" --only-show-errors \
+            || echo "nothing is published yet"
+
+      # The nightly update rolls these forward; the monthly build replaces them, and saves them for it.
+      - name: Restore the cached roads
+        if: env.MODE == 'roads'
+        uses: actions/cache/restore@v6
+        with:
+          path: work/roads
+          key: roads-v1-${{ matrix.batch }}-${{ github.run_id }}
+          restore-keys: roads-v1-${{ matrix.batch }}-
+
       - name: Build the batch's regions
         env:
           BATCH: ${{ matrix.batch }}
           REGIONS: ${{ join(matrix.regions, ' ') }}
+          REWIND: ${{ inputs.rewind }}
         run: |
           args=""; for id in $REGIONS; do args="$args --region $id"; done
-          python -m pipeline.build_batch "$BATCH" $args --report "reports/$BATCH.json"
+          python -m pipeline.build_batch "$BATCH" $args --mode "$MODE" --rewind "${REWIND:-0}" \
+            --live live/regions.json --report "reports/$BATCH.json"
 
-      - name: Stage what was built
+      - name: Save the roads for the next nightly update
+        if: always() && hashFiles('work/roads/*.state.json') != ''
+        uses: actions/cache/save@v6
+        with:
+          path: work/roads
+          key: roads-v1-${{ matrix.batch }}-${{ github.run_id }}
+
+      - name: Stage what's published
         if: always()
         env:
           BATCH: ${{ matrix.batch }}
           REGIONS: ${{ join(matrix.regions, ' ') }}
         run: |
           args=""; for id in $REGIONS; do args="$args --region $id"; done
-          python -m pipeline.release --part "$BATCH" $args
+          python -m pipeline.release --part "$BATCH" $args --live live/regions.json
           du -sh release/packs release/basemap 2>/dev/null || true
 
-      - name: Upload the packs and basemaps (new names, so nothing live changes yet)
+      - name: Upload the new packs and basemaps (new names, so nothing live changes yet)
         if: env.PUBLISH == 'true'
         run: |
           set -e
           aws="aws s3 cp --endpoint-url $R2_ENDPOINT --only-show-errors"
-          $aws release/packs   "s3://$R2_BUCKET/packs"   --recursive --content-type application/gzip --cache-control "public, max-age=31536000, immutable"
-          $aws release/basemap "s3://$R2_BUCKET/basemap" --recursive --cache-control "public, max-age=31536000, immutable"
+          if [ -d release/packs ]; then
+            $aws release/packs "s3://$R2_BUCKET/packs" --recursive --content-type application/gzip --cache-control "public, max-age=31536000, immutable"
+          fi
+          if [ -d release/basemap ]; then
+            $aws release/basemap "s3://$R2_BUCKET/basemap" --recursive --cache-control "public, max-age=31536000, immutable"
+          fi
 
       - uses: actions/upload-artifact@v7
         if: always()
@@ -198,7 +251,7 @@ jobs:
       # The camera refresh won't replace a feed with one less than half its size, so it needs
       # the feeds that are live; and regions that weren't rebuilt keep their live manifest entry.
       - name: Download what's live
-        if: env.PUBLISH == 'true'
+        if: needs.plan.outputs.bucket == 'success'
         run: |
           mkdir -p live release
           aws s3 cp "s3://$R2_BUCKET/regions.json" live/regions.json --endpoint-url "$R2_ENDPOINT" || echo "no manifest online yet"
@@ -211,18 +264,27 @@ jobs:
         run: |
           mkdir -p release/parts
           cp built/release/parts/*.json release/parts/ 2>/dev/null || true
-          python -m pipeline.release --assemble --live live/regions.json
+          python -m pipeline.release --assemble --live live/regions.json --changed-flag changed.txt
+          echo "manifest changed: $(cat changed.txt)"
 
       - name: Summary
         if: always()
         run: python -m pipeline.report built/reports/*.json --release release >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish (fonts, then cameras, then the manifest last)
+      - name: Publish (fonts, cameras, then the manifest last, if it changed)
         if: env.PUBLISH == 'true'
         run: |
           set -e
           aws="aws s3 cp --endpoint-url $R2_ENDPOINT --only-show-errors"
           $aws release/basemap/assets "s3://$R2_BUCKET/basemap/assets" --recursive --cache-control "public, max-age=31536000, immutable"
           $aws release/cameras "s3://$R2_BUCKET/cameras" --recursive --content-type application/json --cache-control "public, max-age=0, must-revalidate"
-          $aws release/regions.json "s3://$R2_BUCKET/regions.json" --content-type application/json --cache-control "public, max-age=0, must-revalidate"
-          echo "Published $(python -c "import json; print(len(json.load(open('release/regions.json'))['regions']))") regions." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$(cat changed.txt)" = "true" ]; then
+            # The cleanup gives the files of the manifest being replaced a day's grace.
+            if [ -f live/regions.json ]; then
+              $aws live/regions.json "s3://$R2_BUCKET/regions.prev.json" --content-type application/json --cache-control "public, max-age=0, must-revalidate"
+            fi
+            $aws release/regions.json "s3://$R2_BUCKET/regions.json" --content-type application/json --cache-control "public, max-age=0, must-revalidate"
+            echo "Published $(python -c "import json; print(len(json.load(open('release/regions.json'))['regions']))") regions." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No road pack or basemap changed, so regions.json stays as it is." >> "$GITHUB_STEP_SUMMARY"
+          fi

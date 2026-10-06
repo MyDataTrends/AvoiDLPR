@@ -92,13 +92,16 @@ around one. AvoiDLPR shows you the options and lets you decide.
 **Is AvoiDLPR part of Flock Safety or DeFlock?** No. It's an independent project that uses
 DeFlock's public camera map.
 
+**How current is the map?** Cameras update hourly. Roads are checked every night: an area's road
+map is replaced when its roads changed noticeably, or weekly for small fixes, so your phone isn't
+downloading it again for every one-street edit. The bottom of the panel shows the dates.
+
 **Does it work outside the US?** Not yet. Nothing about the approach is US-specific, so it can
 cover anywhere the cameras are mapped.
 
 ## Coming next
 
 - Searching for an address instead of tapping the map
-- Daily road updates (the camera map already updates hourly)
 - Trips between areas, and the rest of the country outside the metros
 - Reporting a camera from inside the app
 - Plugins that bring camera zones to open-source navigation apps
