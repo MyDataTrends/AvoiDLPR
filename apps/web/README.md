@@ -158,8 +158,12 @@ is the one you want. `-- --port 5000` changes the port and `-- --no-build` skips
 - **Search** ranks by how well the words match, how notable a place is (an airport above a shop)
   and how near it is to the middle of the map. A place found by search may sit back from the road
   (the middle of a park or an airport), so routing looks up to 2.5 km for a road there, against
-  600 m for a tapped point. Focusing a field on a phone opens the sheet all the way, for room
-  above the keyboard.
+  600 m for a tapped point.
+- **Search on a phone** turns the panel into a full-screen search while a field has focus: the
+  fields at the top with a back button, and the results under them, sized to what the keyboard
+  leaves of the screen (the visual viewport, tracked in `--vv-top` and `--vv-h`), so no result
+  hides behind the keyboard. Picking a result, Back, Escape or the keyboard's Done puts the
+  sheet back.
 - **Areas overlap at their edges.** Where a point is in two (Irving is in Dallas and Fort
   Worth), the app picks the one it sits deepest inside.
 - **Zone alerts during playback** use the zone intervals the router reports (`atM`–`untilM`).
@@ -177,10 +181,11 @@ npm run typecheck -w @flockwatch/web
 node ~/.claude/skills/playwright-skill/run.js apps/web/e2e/phone-and-location.cjs
 ```
 
-[`e2e/search.cjs`](e2e/search.cjs) (27 checks) covers search in Dallas: a place by name, an
-address, a street, an approximate house number, coordinates, no match, the keyboard, swapping,
-naming a tapped spot, a place set back from the road still getting a route, and that search talks
-to nothing but the site. It needs Dallas's search index staged.
+[`e2e/search.cjs`](e2e/search.cjs) (34 checks) covers search in Dallas: the phone search view
+with a keyboard open (faked, as headless browsers have none), a place by name, an address, a
+street, an approximate house number, coordinates, no match, the keyboard, swapping, naming a
+tapped spot, a place set back from the road still getting a route, and that search talks to
+nothing but the site. It needs Dallas's search index staged.
 
 [`e2e/areas.cjs`](e2e/areas.cjs) (28 checks) covers choosing an area: the first-visit chooser,
 search, picking by list and by location, remembering, trips that leave the area, and storage

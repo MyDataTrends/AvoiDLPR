@@ -43,7 +43,14 @@
 
         <section id="trip" class="trip" aria-label="Trip">
           <!-- Each stop is a search box too. Search runs on this device (src/search.ts): what's
-               typed never leaves the page. -->
+               typed never leaves the page. On a phone, typing turns the panel into a full-screen
+               search; this bar is its way back. -->
+          <div class="search-bar">
+            <button id="searchClose" type="button" class="icon-btn back-btn" aria-label="Close search">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+            </button>
+            <p id="searchTitle" class="search-title">Where to?</p>
+          </div>
           <div class="stop">
             <label id="targetFrom" class="stop-main" data-target="true">
               <span class="dot from" aria-hidden="true"></span>

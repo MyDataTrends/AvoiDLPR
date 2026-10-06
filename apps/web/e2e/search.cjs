@@ -25,6 +25,28 @@ const searchReady = (page) => page.waitForFunction(() => window.__fw?.search?.re
 const options = (page) => page.locator('#suggestions .suggestion:not(.suggest-map) .suggest-name').allInnerTexts();
 const value = (page, id) => page.locator(id).inputValue();
 const sheetState = (page) => page.evaluate(() => document.getElementById('panel').dataset.state);
+const searching = (page) => page.evaluate(() => document.documentElement.dataset.searching === 'true');
+const rect = (page, sel) => page.evaluate((s) => document.querySelector(s).getBoundingClientRect().toJSON(), sel);
+
+/**
+ * A stand-in for the on-screen keyboard: browsers shrink the visual viewport when one opens, and
+ * headless Chromium never does. `window.__keyboard(px)` opens one `px` tall (0 closes it).
+ */
+function fakeKeyboard() {
+  const real = window.visualViewport;
+  if (!real) return;
+  const fake = new EventTarget();
+  let keyboard = 0;
+  for (const k of ['width', 'offsetLeft', 'offsetTop', 'pageLeft', 'pageTop', 'scale']) {
+    Object.defineProperty(fake, k, { get: () => real[k] });
+  }
+  Object.defineProperty(fake, 'height', { get: () => real.height - keyboard });
+  Object.defineProperty(window, 'visualViewport', { configurable: true, get: () => fake });
+  window.__keyboard = (px) => {
+    keyboard = px;
+    fake.dispatchEvent(new Event('resize'));
+  };
+}
 
 /** Type into a field and wait for results that include `expect`. */
 async function type(page, field, text, expect) {
@@ -43,6 +65,7 @@ async function type(page, field, text, expect) {
   const browser = await chromium.launch({ headless: true, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   try {
     const ctx = await browser.newContext({ ...devices['Pixel 7'], geolocation: DALLAS_DOWNTOWN, permissions: ['geolocation'] });
+    await ctx.addInitScript(fakeKeyboard);
     const page = await ctx.newPage();
     page.on('pageerror', (e) => errors.push(e.message));
     page.on('console', (m) => m.type() === 'error' && !/failed to fetch|aborted/i.test(m.text()) && errors.push(m.text()));
@@ -55,11 +78,37 @@ async function type(page, field, text, expect) {
     check('the search index downloads once the road map is in', placesRequests.length === 1, placesRequests.join(' '));
     check('the fields start empty, with a hint', (await value(page, '#fromInput')) === '' && /search/i.test(await page.locator('#fromInput').getAttribute('placeholder')));
 
-    // ---------- a destination by name ----------
+    // ---------- on a phone, search takes the screen above the keyboard ----------
+    const screenH = await page.evaluate(() => window.innerHeight);
     await page.locator('#toInput').tap();
-    check('focusing a field opens the sheet all the way', (await sheetState(page)) === 'full');
+    const kb = Math.round(screenH * 0.42);
+    await page.evaluate((px) => window.__keyboard(px), kb);
+    check('focusing a field opens a full-screen search', await searching(page));
+    check('it says which end is being set', (await page.locator('#searchTitle').innerText()) === 'Where to?');
+    check('the route summary and the title make room', await page.locator('#sheetHead').isHidden() && await page.locator('header').isHidden());
+    let panel = await rect(page, '#panel');
+    check('the panel fills what the keyboard leaves', Math.abs(panel.top) < 1 && Math.abs(panel.height - (screenH - kb)) < 2,
+      `${Math.round(panel.top)}+${Math.round(panel.height)} of ${screenH - kb}`);
     check('focusing a field makes map taps set its stop', (await page.locator('#targetTo').getAttribute('data-target')) === 'true');
     check('an empty field offers "Choose on the map"', await page.locator('#suggestions .suggest-map').isVisible());
+    await type(page, '#toInput', 'starbucks', 'Starbucks');
+    await page.waitForFunction(() => document.querySelectorAll('#suggestions .suggestion').length >= 8);
+    const list = await page.evaluate(() => {
+      const el = document.getElementById('suggestions');
+      return { bottom: el.getBoundingClientRect().bottom, scrolls: el.scrollHeight > el.clientHeight + 1 };
+    });
+    check('the results end above the keyboard and scroll there', list.bottom <= screenH - kb + 1 && list.scrolls,
+      `list bottom ${Math.round(list.bottom)}, keyboard top ${screenH - kb}`);
+    check('the field stays at the top', (await rect(page, '#toInput')).top < 160);
+    await page.screenshot({ path: path.join(OUT, 'search-0-keyboard.png') });
+    await page.locator('#searchClose').tap();
+    await page.evaluate(() => window.__keyboard(0));
+    check('Back closes the search and puts the sheet back', !(await searching(page)) && (await sheetState(page)) === 'half'
+      && await page.locator('#sheetHead').isVisible());
+    check('and the field shows what it held', (await value(page, '#toInput')) === '');
+
+    // ---------- a destination by name ----------
+    await page.locator('#toInput').tap();
     await type(page, '#toInput', 'american airlines center', 'American Airlines Center');
     const found = await options(page);
     await page.screenshot({ path: path.join(OUT, 'search-1-results.png') });
@@ -75,7 +124,8 @@ async function type(page, field, text, expect) {
     check('picking one sets the destination', (await value(page, '#toInput')) === 'American Airlines Center');
     const to = await page.evaluate(() => window.__fw.state.to);
     check('at the right spot', Math.abs(to[0] - -96.8103) < 0.003 && Math.abs(to[1] - 32.7905) < 0.003, to.join(','));
-    check('the list closes and the sheet comes back down', await page.locator('#suggestions').isHidden() && (await sheetState(page)) === 'half');
+    check('the list closes and the sheet comes back down', await page.locator('#suggestions').isHidden() && (await sheetState(page)) === 'half'
+      && !(await searching(page)));
     check('names stay out of the link', !/american|airlines/i.test(await page.evaluate(() => location.hash)), await page.evaluate(() => location.hash));
 
     // ---------- a start by address ----------
@@ -116,7 +166,7 @@ async function type(page, field, text, expect) {
     // ---------- choose on the map: the tapped spot is named after what's there ----------
     await page.locator('#toInput').tap();
     await page.locator('#suggestions .suggest-map').tap();
-    check('"Choose on the map" lowers the sheet to show the map', (await sheetState(page)) === 'peek');
+    check('"Choose on the map" lowers the sheet to show the map', (await sheetState(page)) === 'peek' && !(await searching(page)));
     // A few metres from Dallas City Hall.
     await page.evaluate(() => window.__fw.map.jumpTo({ center: [-96.797, 32.7764], zoom: 16 }));
     await page.waitForTimeout(500);
