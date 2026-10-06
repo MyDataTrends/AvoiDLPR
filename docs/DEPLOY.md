@@ -60,7 +60,7 @@ Actions minutes free, and an open project is an easier pitch).
    ```json
    [
      {
-       "AllowedOrigins": ["https://avoidlpr.<your-subdomain>.workers.dev", "http://localhost:5173"],
+       "AllowedOrigins": ["https://map.avoidlpr.workers.dev", "http://localhost:5173"],
        "AllowedMethods": ["GET", "HEAD"],
        "AllowedHeaders": ["range", "if-match", "if-none-match"],
        "ExposeHeaders": ["etag", "content-range", "content-length", "accept-ranges"],
@@ -112,7 +112,7 @@ repository**, choose the repository, then:
 
 | Setting | Value |
 |---|---|
-| Worker name | `avoidlpr`: it has to match `name` in `wrangler.jsonc` |
+| Worker name | `map`: it has to match `name` in `wrangler.jsonc` |
 | Production branch | `main` |
 | Build command | `npm ci && npm run build` |
 | Deploy command | `npx wrangler deploy` (the default) |
@@ -124,8 +124,9 @@ The two variables go under **Settings > Build > Variables and secrets**: they're
 variables, not the Worker's runtime ones. `VITE_DATA_BASE` is baked in when the app is built,
 and also becomes the data host in the Content-Security-Policy, so the browser will refuse to
 talk to anything else; change it and the app has to be rebuilt (retry the deployment). After the
-first deploy, copy the Worker's address (`https://avoidlpr.<your-subdomain>.workers.dev`) into
-the R2 CORS policy from step 2. Every push to `main` redeploys.
+first deploy, copy the Worker's address into the R2 CORS policy from step 2: it's
+`https://map.avoidlpr.workers.dev`, the Worker's name followed by the account's workers.dev
+subdomain (set under **Workers & Pages > Overview > Subdomain**). Every push to `main` redeploys.
 
 (Cloudflare Pages, now the legacy option, works too: build output directory `apps/web/dist`,
 and the same build command and variables.)

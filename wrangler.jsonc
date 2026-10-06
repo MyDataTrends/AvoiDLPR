@@ -5,7 +5,7 @@
 //
 // `name` must match the Worker's name in the Cloudflare dashboard, or the deploy step fails.
 {
-  "name": "avoidlpr",
+  "name": "map",
   "compatibility_date": "2026-10-01",
   "assets": {
     "directory": "./apps/web/dist",
