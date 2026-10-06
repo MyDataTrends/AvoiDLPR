@@ -2,6 +2,7 @@
 // searching never stall the map. The only thing it fetches is the map data it is told to load.
 import { type CameraRecord, type PackMeta, PROFILES, type Route, Router, SNAP_MAX_M } from "@flockwatch/router";
 
+import { fetchData, fetchOk } from "./fetch-data.ts";
 import type { CameraDTO, ProfileName, Request, Response, RouteDTO } from "./protocol.ts";
 
 const scope = self as unknown as {
@@ -57,11 +58,6 @@ function ready(r: Router): void {
   });
 }
 
-async function hex(bytes: Uint8Array): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>));
-  return [...digest].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 async function fetchFeed(url: string): Promise<Feed> {
   // The camera feed changes hourly: revalidated on every load (a cheap 304 when nothing changed).
   return fetchOk(url, { cache: "no-cache" }).then((r) => r.json() as Promise<Feed>);
@@ -69,53 +65,9 @@ async function fetchFeed(url: string): Promise<Feed> {
 
 /** Download, check and decode a pack: the router, or an error saying what went wrong. */
 async function openPack(url: string, bytes: number, sha256: string | undefined, params: ProfileName): Promise<Router> {
-  const pack = await fetchPack(url, bytes, sha256);
+  const pack = await fetchData(url, bytes, sha256, "road map", (p) => scope.postMessage({ type: "progress", ...p }));
   loaded.packMB = pack.byteLength / 1e6;
   return Router.fromBuffer(pack, records, { params: PROFILES[params] });
-}
-
-async function fetchOk(url: string, init?: RequestInit): Promise<globalThis.Response> {
-  const res = await fetch(url, init);
-  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
-  return res;
-}
-
-/**
- * Download a road pack, reporting progress, and un-gzip it. Packs are published gzipped (a third
- * of the size); a host or proxy that already decoded it hands over the plain pack, so the gzip
- * magic bytes decide, not the file name.
- */
-async function fetchPack(url: string, expectedBytes: number, sha256?: string): Promise<ArrayBuffer> {
-  const res = await fetchOk(url);
-  const total = expectedBytes || Number(res.headers.get("content-length")) || 0;
-  const chunks: Uint8Array[] = [];
-  let loaded = 0, lastReport = 0;
-  const reader = res.body!.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    loaded += value.byteLength;
-    const now = performance.now();
-    if (now - lastReport > 150) {
-      lastReport = now;
-      scope.postMessage({ type: "progress", loaded, total });
-    }
-  }
-  const bytes = new Uint8Array(loaded);
-  let at = 0;
-  for (const c of chunks) {
-    bytes.set(c, at);
-    at += c.byteLength;
-  }
-  // The manifest's checksum is of the file as published. (crypto.subtle exists on secure pages
-  // only; an insecure dev page skips the check.)
-  if (sha256 && globalThis.crypto?.subtle && (await hex(bytes)) !== sha256) {
-    throw new Error("the road map arrived damaged (its checksum doesn't match)");
-  }
-  if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) return bytes.buffer;
-  scope.postMessage({ type: "progress", loaded, total: loaded, unpacking: true });
-  return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
 }
 
 scope.onmessage = async (ev) => {
@@ -159,12 +111,15 @@ scope.onmessage = async (ev) => {
       router.setCameras(records, PROFILES[msg.profile]);
       ready(router);
     } else if (msg.type === "route") {
-      const a = router.snap(msg.from[0], msg.from[1]);
-      const b = router.snap(msg.to[0], msg.to[1]);
+      // A place found by search can sit back from the road (the middle of a park or an airport),
+      // so the page asks for a wider look there than for a tap on the map.
+      const reach = [msg.snapM?.[0] || SNAP_MAX_M, msg.snapM?.[1] || SNAP_MAX_M];
+      const a = router.snap(msg.from[0], msg.from[1], reach[0]);
+      const b = router.snap(msg.to[0], msg.to[1], reach[1]);
       if (!a || !b) {
         scope.postMessage({
           type: "noroute", id: msg.id,
-          reason: `There's no road near the ${a ? "destination" : "start"} (none within ${SNAP_MAX_M} m). Try a spot closer to a street.`,
+          reason: `There's no road near the ${a ? "destination" : "start"} (none within ${reach[a ? 1 : 0]} m). Try a spot closer to a street.`,
         });
         return;
       }

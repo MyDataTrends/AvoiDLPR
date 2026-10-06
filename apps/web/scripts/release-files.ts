@@ -10,22 +10,23 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
 
 /** URL prefixes that belong to the release; everything else is the app's own. */
-export const RELEASE_PATHS = /^(regions\.json$|(packs|cameras|basemap)\/)/;
+export const RELEASE_PATHS = /^(regions\.json$|(packs|places|cameras|basemap)\/)/;
 
 const TYPES: Record<string, string> = {
   ".json": "application/json",
   ".pbf": "application/x-protobuf",
   ".png": "image/png",
   ".fwr": "application/octet-stream",
-  // A gzipped pack is a file the app unzips itself: no Content-Encoding, so nothing in between
-  // decodes it on the way.
+  ".fwp": "application/octet-stream",
+  // A gzipped pack or search index is a file the app unzips itself: no Content-Encoding, so
+  // nothing in between decodes it on the way.
   ".gz": "application/gzip",
   ".pmtiles": "application/octet-stream",
 };
 
 /** Content-hashed files (<region>.<10 hex>.<ext>) and fonts/sprites never change; the rest does. */
 function cacheControl(rel: string): string {
-  if (/^(packs|basemap)\/[^/]+\.[0-9a-f]{10}\.(fwr|fwr\.gz|pmtiles)$/.test(rel) || rel.startsWith("basemap/assets/")) {
+  if (/^(packs|places|basemap)\/[^/]+\.[0-9a-f]{10}\.(fwr|fwr\.gz|fwp\.gz|pmtiles)$/.test(rel) || rel.startsWith("basemap/assets/")) {
     return "public, max-age=31536000, immutable";
   }
   return "public, max-age=0, must-revalidate";

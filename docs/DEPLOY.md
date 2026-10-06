@@ -13,16 +13,16 @@ hosting is free-tier friendly and there's nothing to keep running.
           |                +-----+------+
           |                      v
           |         Cloudflare R2 bucket (the data)
-          |         regions.json  packs/  basemap/  cameras/
+          |    regions.json  packs/  places/  basemap/  cameras/
           |                      ^
           +------ fetches -------+          your phone: the app + data come from the two hosts,
-                                            routing happens on the phone
+                                            routing and search happen on the phone
 ```
 
 | Piece | Where | What it is |
 |---|---|---|
 | The app | Cloudflare Worker (static files only) | `apps/web`, built by Vite: about 2 MB of HTML, JS and CSS, plus the service worker and the headers file |
-| The data | Cloudflare R2 bucket | For each of 135 US metro areas: a gzipped road pack (1 to 13 MB), a Protomaps basemap extract (20 to 120 MB) and a camera feed refreshed hourly; plus fonts and sprites. About 7 GB in all, described by `regions.json` |
+| The data | Cloudflare R2 bucket | For each of 135 US metro areas: a gzipped road pack (1 to 13 MB), a search index of its addresses and places (a few MB), a Protomaps basemap extract (20 to 120 MB) and a camera feed refreshed hourly; plus fonts and sprites. About 7 GB in all, described by `regions.json` |
 | Data refresh | GitHub Actions | `build-data` (monthly) and `refresh-cameras` (hourly) |
 
 The app fetches `regions.json` first, and everything else is named in it, so adding a city is a
@@ -156,8 +156,8 @@ and the same build command and variables.)
 | App redeploy | every push to `main` | Cloudflare (Workers Builds) |
 | Camera feeds refreshed from DeFlock | hourly | `refresh-cameras.yml` |
 | Roads updated, changed areas' packs checked and republished | nightly (07:30 UTC) | `build-data.yml` (roads) |
-| Road packs and basemaps rebuilt from fresh downloads | monthly (the 3rd), or on demand | `build-data.yml` (full) |
-| Superseded road packs and basemaps deleted | daily (05:00 UTC), a day after they're replaced | `refresh-cameras.yml` |
+| Road packs, search indexes and basemaps rebuilt from fresh downloads | monthly (the 3rd), or on demand | `build-data.yml` (full) |
+| Superseded road packs, search indexes and basemaps deleted | daily (05:00 UTC), a day after they're replaced | `refresh-cameras.yml` |
 
 Notes:
 - GitHub disables scheduled workflows in a public repository after 60 days with no repository
@@ -169,6 +169,9 @@ Notes:
   reaches into a state it doesn't list fails the run instead of shipping with a hole in it.
 - **Build map data** with "publish" unticked is a dry run: it builds and reports, uploads nothing.
   Its "mode" picks the monthly build (full) or the nightly update (roads).
+- Search indexes are only built by the full build. Until an area has one (a new deployment, or
+  an area whose index failed to build), the app says search isn't ready there yet and map taps
+  still work. To get them sooner than the 3rd, run **Build map data** in full mode.
 - The nightly update's roads live in GitHub's Actions cache (10 GB a repository; old entries
   are evicted). If they're evicted, the next run downloads those states again.
 
@@ -206,7 +209,8 @@ fresh downloads, new basemaps, and a correction for anything the nightly updates
    filters again. A state with no cached copy, or changes the server no longer has, starts again
    from a fresh download.
 2. **Rebuild the packs, not the basemaps.** Every area's road pack is rebuilt from the updated
-   roads; basemaps are cosmetic and stay monthly (a brand-new area gets one).
+   roads. Basemaps are cosmetic and search indexes change slowly, so both stay monthly (a
+   brand-new area gets a basemap).
 3. **Same roads, same file.** A pack carries a fingerprint of its routing content (the graph,
    not the build date). A rebuild with the live fingerprint is *unchanged*: nothing is uploaded
    and phones keep what they have.
@@ -222,22 +226,25 @@ fresh downloads, new basemaps, and a correction for anything the nightly updates
    month.) Both thresholds are at the top of `pipeline/decide.py`.
 6. **Switch, then drop the old file.** `regions.json` moves to the new files in one write, and
    only when something changed; the manifest it replaces is kept as `regions.prev.json`. The
-   daily cleanup deletes a pack or basemap once no manifest has named it for a day, and never a
-   file uploaded in the last day.
+   daily cleanup deletes a pack, search index or basemap once no manifest has named it for a
+   day, and never a file uploaded in the last day.
 7. **On the phone, the old pack stays until the new one is proven.** The app checks a new pack's
    SHA-256 against the manifest and decodes it; only then does it tell the service worker to drop
    older versions. A pack that fails is evicted from the cache (so the next try downloads it
    again) and the app routes on the last good one, saying so. An app left open, or kept in memory
    as an installed app, looks for news whenever it comes back on screen and every half hour:
-   new cameras apply at once, and a new pack or basemap waits until no trip is being driven or
-   previewed. The panel's footer says how current the roads and cameras are.
+   new cameras apply at once, and a new pack, search index or basemap waits until no trip is
+   being driven or previewed. The panel's footer says how current the roads and cameras are.
 
 ## Security and privacy posture
 
-- **Nothing about a trip leaves the device.** Routing happens in the browser. The app's
-  Content-Security-Policy (`apps/web/vite.config.ts`, emitted as `_headers`) lets the page connect
-  only to itself and the data host; the production end-to-end test proves a request to any
-  other origin is blocked.
+- **Nothing about a trip leaves the device.** Routing happens in the browser, and so does
+  search: there is no geocoding service. The app downloads the area's search index and matches
+  what's typed in a worker. The app's Content-Security-Policy (`apps/web/vite.config.ts`,
+  emitted as `_headers`) lets the page connect only to itself and the data host; the production
+  end-to-end test proves a request to any other origin is blocked.
+- Names of searched places stay out of the link: a shared link carries coordinates only, as
+  before.
 - A GPS fix is used in memory and never written to the URL or storage, including while
   navigating. The app remembers which area you picked (on the device), and a shared link only
   names the area when it also carries pins.
@@ -251,9 +258,9 @@ fresh downloads, new basemaps, and a correction for anything the nightly updates
 
 - **Camera locations and roads** come from OpenStreetMap (ODbL). The basemap is a Protomaps
   build of OpenStreetMap (also ODbL). The app shows the required attribution on the map. If you
-  publish derived data (the road packs and camera feeds are derived databases), the ODbL's
-  attribution and share-alike terms apply to it: keep them public and credited. Read the license
-  before you commercialise; this is not legal advice.
+  publish derived data (the road packs, search indexes and camera feeds are derived databases),
+  the ODbL's attribution and share-alike terms apply to it: keep them public and credited. Read
+  the license before you commercialise; this is not legal advice.
 - **Fonts** (Noto Sans, from Protomaps' basemap assets) are SIL OFL.
 - **Code:** Apache-2.0 (`LICENSE`).
 - **Camera data** is crowdsourced and sometimes wrong. The UI says what each zone assumes, and
@@ -268,8 +275,10 @@ fresh downloads, new basemaps, and a correction for anything the nightly updates
   routing across the country would need the road network in tiles, loaded along the way.
 - Live navigation needs the app open with the screen on: phones pause web pages in the
   background. There are no turn-by-turn directions yet, just the route line and camera alerts.
-- No address search: trips are planned by tapping the map. A search that stays on the device
-  would need a place index per area.
+- Search knows what OpenStreetMap knows. House numbers are thorough in some counties and sparse
+  in others; a number that isn't mapped is placed between its neighbours (and marked
+  approximate) or, failing that, the app offers the street. There's no typo tolerance yet, and a
+  search only covers the open area.
 - Offline use covers the app, the road network and the cameras, but not map tiles. An opt-in
   "download this area" for tiles is the next step for a fully offline map.
 - Installed-app behaviour (home screen on iOS and Android) hasn't been checked on real devices:

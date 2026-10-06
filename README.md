@@ -5,8 +5,8 @@
 AvoiDLPR is a free map app that knows where automated license plate readers (ALPRs) are,
 Flock Safety cameras included. It finds routes that pass as few of them as possible, shows you
 what each route costs in cameras and in minutes, and warns you as you drive. It runs in your
-phone's browser, installs to your home screen like an app, and never sends your location or your
-destination anywhere.
+phone's browser, installs to your home screen like an app, and never sends your location, your
+destination or your searches anywhere.
 
 <p align="center">
   <img src="docs/images/desktop.jpg" width="900" alt="AvoiDLPR on a laptop. A trip across Dallas has four route options, from the fastest (26 minutes, through 6 camera zones) to the one with the fewest cameras (28 minutes, through none). Each camera is drawn on the map as an arrow showing which way it points.">
@@ -34,9 +34,11 @@ is a good place to learn more.
 ## How it works
 
 <p align="center">
-  <img src="docs/images/phone-routes.jpg" width="270" alt="On a phone: the trip's route options in a panel under the map, with the fewest-cameras option selected.">
-  &nbsp;&nbsp;
-  <img src="docs/images/phone-drive.jpg" width="270" alt="Previewing a drive on a phone: a red banner reads 'In a camera zone: Flock Safety, reads plates heading N' as the route passes through a camera's shaded view.">
+  <img src="docs/images/phone-search.jpg" width="250" alt="Searching on a phone: the start is 'Your location', and typing 'fair park' as the destination lists Fair Park's station and neighborhood, the Music Hall at Fair Park and other matches, each with what it is, its town and how far away it is.">
+  &nbsp;
+  <img src="docs/images/phone-routes.jpg" width="250" alt="On a phone: the trip's route options in a panel under the map, with the fewest-cameras option selected.">
+  &nbsp;
+  <img src="docs/images/phone-drive.jpg" width="250" alt="Previewing a drive on a phone: a red banner reads 'In a camera zone: Flock Safety, reads plates heading N' as the route passes through a camera's shaded view.">
 </p>
 
 1. **A map of the cameras.** Volunteers map ALPRs on OpenStreetMap through
@@ -57,19 +59,23 @@ is a good place to learn more.
    background. (**Preview drive** plays the trip back on the map, to see where the zones are.)
 
 AvoiDLPR works one metro area at a time: the first time you open it, it asks where you drive (or
-finds your area from your location) and downloads that area's road map, a few megabytes. To plan
-a trip, tap the map to set where you're starting (or use your current location) and where you're
-going.
+finds your area from your location) and downloads that area's road map and its list of addresses
+and places, a few megabytes. To plan a trip, type where you're going (an address, a street, or a
+place like a store, a stadium or the airport) or tap it on the map, and start from your current
+location or anywhere else.
 
 ## Your privacy
 
 - **Routing happens on your phone.** The app downloads your area's road map and camera list
   once, then works out every route on the device. Your location, start and destination are
   never sent anywhere. There's no AvoiDLPR server to send them to.
+- **So does search.** Most map apps send everything you type to their servers. AvoiDLPR
+  downloads your area's addresses and places once and looks them up on your phone, so what you
+  search for stays there too.
 - **No account, no ads, no analytics.** The app remembers which area you picked, on your device.
 - Like any online map, it downloads map images for the area on screen. Those come from
   AvoiDLPR's own file host (not Google or Apple) and carry no account or identifier.
-- After the first visit, route planning works offline too.
+- After the first visit, route planning and search work offline too.
 
 ## Help improve the camera map
 
@@ -94,14 +100,21 @@ DeFlock's public camera map.
 
 **How current is the map?** Cameras update hourly. Roads are checked every night: an area's road
 map is replaced when its roads changed noticeably, or weekly for small fixes, so your phone isn't
-downloading it again for every one-street edit. The bottom of the panel shows the dates.
+downloading it again for every one-street edit. The bottom of the panel shows their dates.
+Addresses and places, for search, are rebuilt monthly.
+
+**Why can't it find an address?** Search knows the addresses and places on OpenStreetMap, which
+has every house number in some towns and few in others. When a number isn't mapped but its
+neighbors are, AvoiDLPR places it between them and marks it *Approximate*. Otherwise it offers
+the street, and you can always tap the exact spot on the map. Anyone can
+[add missing addresses and places](https://www.openstreetmap.org/fixthemap) to OpenStreetMap,
+and AvoiDLPR picks them up within a month.
 
 **Does it work outside the US?** Not yet. Nothing about the approach is US-specific, so it can
 cover anywhere the cameras are mapped.
 
 ## Coming next
 
-- Searching for an address instead of tapping the map
 - Trips between areas, and the rest of the country outside the metros
 - Reporting a camera from inside the app
 - Plugins that bring camera zones to open-source navigation apps
@@ -109,9 +122,10 @@ cover anywhere the cameras are mapped.
 ## For developers
 
 AvoiDLPR is a static website plus static data files: no server, no database. A Python pipeline
-turns OpenStreetMap and DeFlock data into a compact road file for each city. The app is
-TypeScript: MapLibre GL with a self-hosted Protomaps basemap, and its own router, which runs in
-a Web Worker on your phone. The code still uses the project's working name, FlockWatch.
+turns OpenStreetMap and DeFlock data into a compact road file and a search index for each city.
+The app is TypeScript: MapLibre GL with a self-hosted Protomaps basemap, and its own router and
+search, which run in Web Workers on your phone. The code still uses the project's working name,
+FlockWatch.
 
 - [docs/DEVELOPING.md](docs/DEVELOPING.md): building, testing and adding a city
 - [docs/DEPLOY.md](docs/DEPLOY.md): hosting it for free (Cloudflare Workers and R2, GitHub Actions)
@@ -127,8 +141,8 @@ The code is licensed under the [Apache License 2.0](LICENSE).
 
 The map data is not. Roads and camera locations come from OpenStreetMap under the
 [Open Database License](https://opendatacommons.org/licenses/odbl/) (© OpenStreetMap
-contributors), and the road packs and camera feeds this project builds from them carry the same
-license. The basemap tiles are a Protomaps build of OpenStreetMap (also ODbL), the label fonts
+contributors), and the road packs, search indexes and camera feeds this project builds from them
+carry the same license. The basemap tiles are a Protomaps build of OpenStreetMap (also ODbL), the label fonts
 are Noto Sans (SIL Open Font License), and MapLibre GL JS, PMTiles and the Protomaps style are
 BSD-3-Clause.
 

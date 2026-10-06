@@ -5,8 +5,11 @@ The AvoiDLPR app: camera-aware routing and navigation in the browser, for phones
 - **Pick your area.** The first visit asks where you drive: a searchable list of the metro areas
   in the manifest, grouped by state, or **Use my location**. The choice is remembered on the
   device; the area name at the top of the panel switches.
-- **Set a trip.** Tap the map for a start and a destination, or press the target button (on the
-  map and in the panel) to start from your current location. Drag a pin to adjust it, swap the
+- **Set a trip.** The From and To fields are search boxes: type an address, a street, a place
+  (a store, a stadium, the airport) or coordinates, and pick from the results. Or tap the map,
+  which sets the field used last ("Choose on the map" from the results lowers the sheet for it),
+  or press the target button (on the map and in the panel) to start from your current location.
+  A tapped stop is named after the nearest address or place. Drag a pin to adjust it, swap the
   ends, or load an example.
 - **Choose a route.** You get up to four options from fastest to fewest cameras, each with its
   extra time, distance and camera-zone count. "Recommended" is the fewest cameras within 10% more
@@ -19,17 +22,19 @@ The AvoiDLPR app: camera-aware routing and navigation in the browser, for phones
   one, and the screen kept awake. Start sits in the sheet's header on a phone, so it's in reach
   at any height.
 
-Nothing leaves the device. The road network, camera feed, basemap tiles, fonts and icons all come
-from this origin or the data host, and routing runs in a Web Worker
-([`@flockwatch/router`](../../packages/router)). The state kept is the URL hash (pins and the zone
-model, which browsers never send to a server) and the area you picked (local storage). **Your
-location is used in memory only: it is never sent anywhere, and never written to the URL or to
-storage**, including while navigating, so a shared link can't reveal where you are.
+Nothing leaves the device. The road network, search index, camera feed, basemap tiles, fonts and
+icons all come from this origin or the data host, and routing and search run in Web Workers
+([`@flockwatch/router`](../../packages/router)): **what you type into search is matched on the
+device and never sent anywhere.** The state kept is the URL hash (pins and the zone model, which
+browsers never send to a server; not the names of searched places) and the area you picked
+(local storage). **Your location is used in memory only: it is never sent anywhere, and never
+written to the URL or to storage**, including while navigating, so a shared link can't reveal
+where you are.
 
 ## Where the data comes from
 
-The app boots by fetching `regions.json`, a manifest listing each region's road pack, camera
-feed and basemap, and names everything else from it ([`src/data.ts`](src/data.ts)). Where that
+The app boots by fetching `regions.json`, a manifest listing each region's road pack, search
+index, camera feed and basemap, and names everything else from it ([`src/data.ts`](src/data.ts)). Where that
 manifest lives is `VITE_DATA_BASE` (a URL, set when the app is built):
 
 - **Development and `npm run phone`:** unset, so the data is served from this same origin: the
@@ -65,8 +70,9 @@ checked against the manifest's SHA-256 and decoded before it counts; until then 
 worker keeps the last pack that loaded, and the worker falls back to it, saying so. A pack that
 fails is evicted from the cache so the next try downloads it again. The app looks for a new
 manifest whenever it comes back on screen (and every half hour while it's on): new cameras apply
-at once; a new pack or basemap waits until no trip is being driven or previewed. The panel's
-footer shows how current the roads and cameras are.
+at once; a new pack, search index or basemap waits until no trip is being driven or previewed. A
+new search index swaps in on its own, without reloading the road map. The panel's footer shows how
+current the roads and cameras are.
 
 ## Install it like an app, and offline
 
@@ -79,8 +85,8 @@ full-screen with no browser bar. The app also shows install instructions in the 
   PNGs from the SVG with `scripts/make-icons.cjs`.
 - **Service worker** ([`sw/sw.template.js`](sw/sw.template.js); the build fills in the file list
   and a version): the app opens instantly and with no network, and after the first visit the road
-  pack, camera feed and manifest are cached, so **routing works offline**. Map tiles are the one
-  thing that still needs a connection. A new version reloads open tabs once, so a tab never runs
+  pack, search index, camera feed and manifest are cached, so **routing and search work
+  offline**. Map tiles are the one thing that still needs a connection. A new version reloads open tabs once, so a tab never runs
   files the new worker has retired. It's registered in production builds only.
 - **Headers** (`_headers`, emitted by the build for Cloudflare Workers, Pages and Netlify): the
   Content-Security-Policy, caching rules, and a permissions policy.
@@ -127,6 +133,9 @@ is the one you want. `-- --port 5000` changes the port and `-- --no-build` skips
 | Piece | Role |
 |---|---|
 | `src/worker.ts` | Downloads the road pack (with progress) and unzips it, loads the camera feed, runs `Router.routeAlternatives` and the live `sitesCapturingAt` check |
+| `src/search-worker.ts` | Downloads the area's search index once the road map is in, and answers searches and "what's here" (`PlaceSearch` in the router package) |
+| `src/search.ts` | The From and To fields as search boxes: the results list, keyboard (arrows, Enter, Escape), "Choose on the map", coordinates without an index |
+| `src/fetch-data.ts` | Downloading a road pack or search index: progress, the manifest's SHA-256, un-gzipping |
 | `src/map.ts` | MapLibre with the Protomaps `light` style via the `pmtiles://` protocol; overlays for routes, camera arrows (rotated to where each camera looks), capture zones, the GPS accuracy circle and the car |
 | `src/data.ts` | Where data lives (`VITE_DATA_BASE`), the `regions.json` manifest, which area to open, and which areas hold a point |
 | `src/chooser.ts` | The "Where do you drive?" dialog: search, grouping by state, pick by location |
@@ -146,6 +155,11 @@ is the one you want. `-- --port 5000` changes the port and `-- --no-build` skips
 - **Taps on the map**: a camera opens its details; another route's line selects that route (the
   nearest line wins where options share a road); anything else sets the active end of the trip.
   A pin outside the area offers the neighbouring area that holds the whole trip, if one does.
+- **Search** ranks by how well the words match, how notable a place is (an airport above a shop)
+  and how near it is to the middle of the map. A place found by search may sit back from the road
+  (the middle of a park or an airport), so routing looks up to 2.5 km for a road there, against
+  600 m for a tapped point. Focusing a field on a phone opens the sheet all the way, for room
+  above the keyboard.
 - **Areas overlap at their edges.** Where a point is in two (Irving is in Dallas and Fort
   Worth), the app picks the one it sits deepest inside.
 - **Zone alerts during playback** use the zone intervals the router reports (`atM`–`untilM`).
@@ -163,28 +177,33 @@ npm run typecheck -w @flockwatch/web
 node ~/.claude/skills/playwright-skill/run.js apps/web/e2e/phone-and-location.cjs
 ```
 
-[`e2e/areas.cjs`](e2e/areas.cjs) (27 checks) covers choosing an area: the first-visit chooser,
+[`e2e/search.cjs`](e2e/search.cjs) (27 checks) covers search in Dallas: a place by name, an
+address, a street, an approximate house number, coordinates, no match, the keyboard, swapping,
+naming a tapped spot, a place set back from the road still getting a route, and that search talks
+to nothing but the site. It needs Dallas's search index staged.
+
+[`e2e/areas.cjs`](e2e/areas.cjs) (28 checks) covers choosing an area: the first-visit chooser,
 search, picking by list and by location, remembering, trips that leave the area, and storage
 being blocked. It serves its own three-area manifest, so it only needs Dallas staged.
 [`e2e/navigate.cjs`](e2e/navigate.cjs) (15 checks) drives the example trip with fed GPS fixes:
 the camera-ahead and in-zone alerts, going off route and rerouting, arriving, and that no
 position reaches the URL.
 
-[`e2e/updates.cjs`](e2e/updates.cjs) (12 checks) covers taking updates: a damaged new pack
+[`e2e/updates.cjs`](e2e/updates.cjs) (14 checks) covers taking updates: a damaged new pack
 falling back to the last good one, a new pack found on return swapped in between trips but not
-mid-drive, and new cameras arriving.
+mid-drive, new cameras arriving, and a new search index swapped in on its own.
 
 [`e2e/phone-and-location.cjs`](e2e/phone-and-location.cjs) drives a Pixel 7 emulation (touch
 input, a fake GPS fix) and a desktop window through 39 checks: the bottom sheet (drag, keyboard,
 tap), route options, tapping routes, framing, current location (granted, blocked, outside the
 area), the drive preview, and tap-target sizes. It also fails on any console error or any
-request that leaves localhost. In dev builds the page exposes `window.__fw` (map, state, sheet)
-for it; production builds don't.
+request that leaves localhost. In dev builds the page exposes `window.__fw` (map, state, sheet,
+search) for it; production builds don't.
 
 [`e2e/production.cjs`](e2e/production.cjs) checks the build as deployed, with the data on a
 different origin (as with a bucket): the security headers, that the page really can't reach any
 other origin, cross-origin data and byte ranges, the install manifest and icons, the service
-worker, and **routing with the network switched off**. To run it, start a stand-in for the
+worker, and **routing and search with the network switched off** (21 checks). To run it, start a stand-in for the
 bucket and the built app (the script's header has the commands):
 
 ```bash
@@ -198,14 +217,16 @@ node ~/.claude/skills/playwright-skill/run.js e2e/production.cjs
 ## Known limits
 
 - **Size.** The first load fetches the area's gzipped road pack (1 to 13 MB; Dallas, the
-  biggest, is 12.5 MB) plus map tiles on demand, then the pack is cached for offline use.
+  biggest, is 12.5 MB) and then its search index (a few MB) plus map tiles on demand; both are
+  cached for offline use.
 - **Route options.** Computing them takes about 30 ms typically and up to ~120 ms on long trips
   in Dallas, in the worker.
 - **Navigation needs the app on screen.** Phones pause web pages in the background, so it works
   with the app open and the screen on (it asks the browser to keep the screen awake). No
   turn-by-turn directions yet: the route line and the camera alerts.
-- **No address search.** Geocoding would need a third-party service or a place index per area,
-  so you place pins on the map.
+- **Search knows what OpenStreetMap knows.** Addresses are thorough in some counties and sparse
+  in others: a missing house number is placed between its neighbours and marked approximate, or
+  the app offers the street. No typo tolerance yet, and only the open area is searched.
 - **Fixed playback speed.** The drive plays back at the route's average speed, not per-road
   speeds.
 - **Light theme only.** No dark basemap yet.

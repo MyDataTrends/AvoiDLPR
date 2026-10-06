@@ -1,7 +1,8 @@
 // End-to-end check of how the app takes data updates: a damaged new road pack gives way to the last
 // good one; a new pack found when the app comes back on screen is swapped in between trips, never
-// mid-drive; new cameras apply at once. It needs the dev server on :5173 with the Dallas release
-// staged, and Playwright with Chromium. With the playwright skill:
+// mid-drive; new cameras apply at once; a new search index swaps in on its own. It needs the dev
+// server on :5173 with the Dallas release staged, and Playwright with Chromium. With the
+// playwright skill:
 //   node ~/.claude/skills/playwright-skill/run.js apps/web/e2e/updates.cjs
 const { chromium, devices } = require('playwright');
 
@@ -96,6 +97,23 @@ const goodPack = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('
     check('new cameras arrive with the check', true, `${before} -> ${before + 1}`);
     check('and the footer shows the feed\'s new time', /Oct 6/.test(await page.locator('#freshness').innerText()),
       await page.locator('#freshness').innerText());
+
+    // ---------- a new search index (the monthly build) swaps in, and the road map stays ----------
+    if (dallas.places) {
+      const NEW_PLACES = 'places/dallas.0123456789.fwp.gz';
+      const placesBytes = Buffer.from(await (await fetch(URL + dallas.places.path)).arrayBuffer());
+      await ctx.route(`**/${NEW_PLACES}`, (r) => r.fulfill({ body: placesBytes, contentType: 'application/gzip' }));
+      served = { ...real, regions: real.regions.map((r) => (r.id === 'dallas' ? { ...r, places: { ...r.places, path: NEW_PLACES } } : r)) };
+      const packBefore = await goodPack(page);
+      const fetched = page.waitForRequest((r) => r.url().endsWith(NEW_PLACES), { timeout: 20_000 });
+      await page.evaluate(() => window.__fw.checkForUpdates(true));
+      await fetched;
+      await page.waitForFunction((p) => window.__fw.search.ready && window.__fw.search.file?.url.endsWith(p), NEW_PLACES, { timeout: 30_000 });
+      check('a new search index is swapped in', true);
+      check('and the road map is left as it was', (await goodPack(page)) === packBefore && (await page.evaluate(() => window.__fw.state.stats !== null)));
+    } else {
+      console.log('SKIP  search index updates: the staged release has no search index for Dallas');
+    }
     await ctx.close();
   } finally {
     await browser.close();

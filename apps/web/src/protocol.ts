@@ -1,5 +1,5 @@
-// Messages between the page and the routing worker.
-import type { HeadingMode, ZoneParams } from "@flockwatch/router";
+// Messages between the page and its two workers: routing (worker.ts) and search (search-worker.ts).
+import type { HeadingMode, PlaceResult, ZoneParams } from "@flockwatch/router";
 
 export type ProfileName = "strict" | "default" | "loose";
 export type LonLat = [number, number];
@@ -59,7 +59,8 @@ export type Request =
   /** Fetch the camera feed again (the app came back on screen) and recompute the zones. */
   | { type: "cameras"; camerasUrl: string }
   | { type: "profile"; profile: ProfileName }
-  | { type: "route"; id: number; from: LonLat; to: LonLat }
+  /** `snapM`: how far from each end to look for a road (0: the usual distance). */
+  | { type: "route"; id: number; from: LonLat; to: LonLat; snapM?: [number, number] }
   | { type: "capturing"; id: number; lon: number; lat: number; heading: number };
 
 export type Response =
@@ -73,3 +74,19 @@ export type Response =
   | { type: "capturing"; id: number; sites: number[] }
   /** `badPack`: a road pack that failed its checks, so the cached copy should go. */
   | { type: "error"; message: string; badPack?: string };
+
+export type SearchRequest =
+  /** Download (or take from the cache) an area's place index, replacing any other. */
+  | { type: "load"; url: string; bytes: number; sha256?: string }
+  /** Results for what's typed, nearest `near` first among equals. */
+  | { type: "search"; id: number; query: string; near?: LonLat }
+  /** The address or place at a point, to name a spot tapped on the map. */
+  | { type: "nearest"; id: number; at: LonLat };
+
+export type SearchResponse =
+  | { type: "progress"; url: string; loaded: number; total: number; unpacking?: boolean }
+  | { type: "loaded"; url: string; counts: { streets: number; addresses: number; places: number } }
+  | { type: "results"; id: number; results: PlaceResult[] }
+  | { type: "nearest"; id: number; result: PlaceResult | null }
+  /** `url`: the index that failed to load (so the cached copy should go), if that's what failed. */
+  | { type: "error"; message: string; url?: string };
