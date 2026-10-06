@@ -1,7 +1,9 @@
 // The app is deployed as a Cloudflare Worker that only serves static files: the Vite build in
 // apps/web/dist, with its _headers file (the Content-Security-Policy and caching rules). There's
 // no Worker code. Workers Builds runs the build command (`npm ci && npm run build`), then
-// `npx wrangler deploy`, which reads this file. docs/DEPLOY.md, step 5, has the settings.
+// `npx wrangler deploy`, which reads this file. docs/DEPLOY.md, step 5, has the settings. (On
+// branches other than main the build skips Cloudflare's preview upload:
+// apps/web/scripts/cloudflare-branch-builds.mjs.)
 //
 // `name` must match the Worker's name in the Cloudflare dashboard, or the deploy step fails.
 {

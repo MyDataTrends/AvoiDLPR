@@ -7,7 +7,7 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run build -w @flockwatch/web",
+    "build": "npm run build -w @flockwatch/web && node apps/web/scripts/cloudflare-branch-builds.mjs",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
