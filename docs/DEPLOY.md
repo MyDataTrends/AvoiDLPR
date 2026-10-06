@@ -1,6 +1,6 @@
-# Deploying FlockWatch
+# Deploying AvoiDLPR
 
-FlockWatch is a static site plus static data files. There is no server, database or API, so
+AvoiDLPR is a static site plus static data files. There is no server, database or API, so
 hosting is free-tier friendly and there's nothing to keep running.
 
 ```

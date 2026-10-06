@@ -74,7 +74,7 @@ function check(name, ok, detail = '') {
     const manifestHref = await page.locator('link[rel=manifest]').getAttribute('href');
     const manifest = await (await ctx.request.get(new URL(manifestHref, APP).href)).json();
     check('manifest: standalone app with name, start URL and colours',
-      manifest.display === 'standalone' && manifest.name === 'FlockWatch' && manifest.start_url === '/' && Boolean(manifest.theme_color) && Boolean(manifest.background_color));
+      manifest.display === 'standalone' && manifest.name === 'AvoiDLPR' && manifest.start_url === '/' && Boolean(manifest.theme_color) && Boolean(manifest.background_color));
     const sizes = [];
     for (const icon of manifest.icons) {
       const r = await ctx.request.get(new URL(icon.src, APP).href);

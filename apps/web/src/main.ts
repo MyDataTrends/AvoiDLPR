@@ -27,7 +27,7 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getEl
 
 function showBootFailure(err: unknown): never {
   const message = err instanceof Error ? err.message : String(err);
-  const text = `FlockWatch couldn't load its map data. ${message}`;
+  const text = `AvoiDLPR couldn't load its map data. ${message}`;
   $("summary").textContent = "Couldn't load map data";
   $("status").textContent = text;
   $("notice").textContent = text;
@@ -39,7 +39,7 @@ const manifest = await loadManifest().catch(showBootFailure);
 const region = pickRegion(manifest, new URLSearchParams(location.hash.slice(1)).get("r"));
 /** Names of every region covered, for messages ("Dallas and Austin"). */
 const coveredAreas = new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(manifest.regions.map((r) => r.name));
-document.title = `FlockWatch · ${region.name}`;
+document.title = `AvoiDLPR · ${region.name}`;
 $("lede").textContent = `Routes around license-plate cameras in ${region.name}. Everything is computed in this tab: your start and destination never leave it.`;
 $("example").hidden = !region.example;
 
@@ -529,7 +529,7 @@ async function useMyLocation(): Promise<void> {
   try {
     const fix = await locate();
     if (state.stats && !insideBox(state.stats.bbox, fix.lon, fix.lat)) {
-      state.notice = `You're outside the area FlockWatch covers (${coveredAreas}). Tap the map to pick a start inside it.`;
+      state.notice = `You're outside the area AvoiDLPR covers (${coveredAreas}). Tap the map to pick a start inside it.`;
       render();
       return;
     }

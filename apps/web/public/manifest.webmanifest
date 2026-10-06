@@ -1,6 +1,6 @@
 {
-  "name": "FlockWatch",
-  "short_name": "FlockWatch",
+  "name": "AvoiDLPR",
+  "short_name": "AvoiDLPR",
   "description": "Routes around license-plate cameras, computed entirely on your device.",
   "id": "/",
   "start_url": "/",
