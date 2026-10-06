@@ -14,7 +14,9 @@ missing=()
 case "${R2_ENDPOINT:-}" in "" | "https://.r2.cloudflarestorage.com") missing+=("the R2_ACCOUNT_ID secret") ;; esac
 if [ ${#missing[@]} -gt 0 ]; then
   printf -v list '%s, ' "${missing[@]}"
-  echo "::error::Missing ${list%, }. Set them under Settings > Secrets and variables > Actions, with exactly those names (docs/DEPLOY.md, step 3)."
+  them="them" names="those names"
+  if [ ${#missing[@]} -eq 1 ]; then them="it" names="that name"; fi
+  echo "::error::Missing ${list%, }. Set ${them} under Settings > Secrets and variables > Actions, with exactly ${names} (docs/DEPLOY.md, step 3)."
   exit 1
 fi
 
