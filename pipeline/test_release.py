@@ -299,15 +299,27 @@ def test_plan_groups_regions_by_home_state_batch():
 def test_prune_lists_unreferenced_files_once_the_manifest_has_settled():
     import datetime as dt
 
-    from pipeline.prune import stale_keys
+    from pipeline.prune import parse_listing, stale_keys
 
     manifest = {"generated_at": "2026-10-01T00:00:00+00:00", "regions": [_entry("a")]}
-    keys = ["packs/a.new.fwr.gz", "packs/a.old.fwr.gz", "basemap/a.new.pmtiles", "basemap/a.old.pmtiles",
-            "basemap/assets/fonts/x.pbf", "cameras/a.json", "regions.json"]
+    listing = parse_listing("\n".join([
+        "packs/a.new.fwr.gz\t2026-10-01T00:00:00.000Z",
+        "packs/a.old.fwr.gz\t2026-09-01T00:00:00.000Z",
+        "basemap/a.new.pmtiles\t2026-10-01T00:00:00.000Z",
+        "basemap/a.old.pmtiles\t2026-09-01T00:00:00.000Z",
+        "basemap/assets/fonts/x.pbf\t2026-01-01T00:00:00.000Z",
+        "packs/b.uploading.fwr.gz\t2026-10-01T23:30:00.000Z",  # a build that hasn't published yet
+        "packs/c.untimed.fwr.gz",
+        "cameras/a.json\t2026-01-01T00:00:00.000Z",
+        "regions.json\t2026-01-01T00:00:00.000Z",
+        "None",
+    ]))
     soon = dt.datetime(2026, 10, 1, 12, tzinfo=dt.UTC)
     later = dt.datetime(2026, 10, 2, 1, tzinfo=dt.UTC)
-    assert stale_keys(manifest, keys, now=soon, min_age_hours=24) == []
-    assert stale_keys(manifest, keys, now=later, min_age_hours=24) == ["basemap/a.old.pmtiles", "packs/a.old.fwr.gz"]
+    assert stale_keys(manifest, listing, now=soon, min_age_hours=24) == []
+    # The superseded pair goes; the live files, the fonts, a fresh upload and a file of unknown
+    # age all stay.
+    assert stale_keys(manifest, listing, now=later, min_age_hours=24) == ["basemap/a.old.pmtiles", "packs/a.old.fwr.gz"]
 
 
 def test_report_puts_failures_first_and_totals_the_bucket(tmp_path):

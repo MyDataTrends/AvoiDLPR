@@ -88,9 +88,11 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ] && [ "$(date -u +%H)" != "05" ]; then exit 0; fi
           for prefix in packs/ basemap/; do
             aws s3api list-objects-v2 --bucket "$R2_BUCKET" --prefix "$prefix" --endpoint-url "$R2_ENDPOINT" \
-              --query 'Contents[].Key' --output text >> keys.txt || true
+              --query 'Contents[].[Key,LastModified]' --output text >> listing.txt || true
           done
-          python -m pipeline.prune --manifest release/regions.json --keys keys.txt > stale.txt
+          # Files younger than a day are kept even if nothing names them yet: a build in progress
+          # uploads its files before it publishes the manifest that points at them.
+          python -m pipeline.prune --manifest release/regions.json --listing listing.txt > stale.txt
           echo "$(wc -l < stale.txt) superseded files to delete"
           while read -r key; do
             [ -n "$key" ] && aws s3 rm "s3://$R2_BUCKET/$key" --endpoint-url "$R2_ENDPOINT" --only-show-errors
