@@ -70,6 +70,11 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      # With a bucket, say now if it can't be used, not after the build.
+      - name: Check the bucket is set up and reachable
+        if: env.R2_BUCKET != ''
+        run: bash .github/scripts/check-bucket.sh
+
       - name: Check each region lists every state it reaches into
         run: python -m pipeline.check_regions
 
