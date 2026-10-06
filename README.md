@@ -1,8 +1,10 @@
-# FlockWatch
+# AvoiDLPR
+Map routes to take you across as few ALPRs as possible
 
 Camera-aware navigation. It warns when you're entering an ALPR (Flock and others) capture zone,
 and finds routes that avoid them. Everything runs on your device, and it installs to a phone's
-home screen like an app (no app store).
+home screen like an app (no app store). The code still uses the project's working name,
+FlockWatch.
 
 Camera locations come from [DeFlock](https://deflock.org)'s crowdsourced OpenStreetMap data,
 and roads come from OpenStreetMap. Both are © OpenStreetMap contributors, ODbL.
@@ -47,3 +49,14 @@ npm run phone -w @flockwatch/web                      # serve to your phone over
 Any other region: add it to `pipeline/regions.json` and run
 `python -m pipeline.build_region <id>` (it downloads, clips and builds; needs
 [osmium-tool](https://osmcode.org/osmium-tool/)), then the same basemap, cameras and release steps.
+
+## License
+
+The code is licensed under the [Apache License 2.0](LICENSE).
+
+The map data is not. Roads and camera locations come from OpenStreetMap under the
+[Open Database License](https://opendatacommons.org/licenses/odbl/) (© OpenStreetMap
+contributors), and the road packs and camera feeds this project builds from them carry the same
+license. The basemap tiles are a Protomaps build of OpenStreetMap (also ODbL), the label fonts
+are Noto Sans (SIL Open Font License), and MapLibre GL JS, PMTiles and the Protomaps style are
+BSD-3-Clause.
