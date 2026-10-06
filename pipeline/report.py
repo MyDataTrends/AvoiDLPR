@@ -48,11 +48,12 @@ def render(reports: list[dict], manifest: dict | None, release: Path) -> str:
     if manifest:
         packs = sum(e["pack"]["bytes"] for e in listed.values())
         basemaps = sum(e["basemap"]["bytes"] for e in listed.values())
+        search = sum((e.get("places") or {}).get("bytes", 0) for e in listed.values())
         heaviest = max(listed.values(), key=lambda e: e["pack"]["bytes"], default=None)
         out += [
-            f"- **Published regions:** {len(listed)}",
-            f"- **Bucket size:** {(packs + basemaps) / 1e9:.2f} GB ({packs / 1e9:.2f} GB road packs, "
-            f"{basemaps / 1e9:.2f} GB basemaps) of the {FREE_TIER_GB} GB free tier",
+            f"- **Published regions:** {len(listed)} ({sum(1 for e in listed.values() if e.get('places'))} with search)",
+            f"- **Bucket size:** {(packs + basemaps + search) / 1e9:.2f} GB ({packs / 1e9:.2f} GB road packs, "
+            f"{basemaps / 1e9:.2f} GB basemaps, {search / 1e9:.2f} GB search indexes) of the {FREE_TIER_GB} GB free tier",
         ]
         if heaviest:
             out.append(f"- **Biggest download:** {heaviest['name']}, {mb(heaviest['pack']['bytes'])} MB gzipped "
@@ -63,12 +64,17 @@ def render(reports: list[dict], manifest: dict | None, release: Path) -> str:
     held = [r for r in rows if r.get("status") == "hold"]
     if held:
         out += ["### Held back (the live pack stays)", ""] + [f"- **{r['id']}**: {r.get('why', '?')}" for r in held] + [""]
+    unsearchable = [r for r in rows if r.get("places_error")]
+    if unsearchable:
+        out += ["### Search index not built (the live one stays)", ""]
+        out += [f"- **{r['id']}**: {r['places_error']}" for r in unsearchable] + [""]
     warned = [r for r in rows if r.get("warning")]
     if warned:
         out += ["### Heavy", ""] + [f"- **{r['id']}**: {r['warning']}" for r in warned] + [""]
 
-    out += ["| Region | Outcome | Batch | Road edges | Pack MB (gzip) | Basemap MB (zoom) | Cameras | Build s |",
-            "|---|---|---|--:|--:|--:|--:|--:|"]
+    out += ["| Region | Outcome | Batch | Road edges | Pack MB (gzip) | Basemap MB (zoom) | Search MB (gzip) "
+            "| Cameras | Build s |",
+            "|---|---|---|--:|--:|--:|--:|--:|--:|"]
     rank = {"failed": 0, "hold": 1, "publish": 2, "defer": 3, "unchanged": 4}
     order = sorted(rows, key=lambda r: (rank.get(r.get("status") or ("publish" if r["ok"] else "failed"), 5),
                                         -(r.get("edges") or 0)))
@@ -82,8 +88,10 @@ def render(reports: list[dict], manifest: dict | None, release: Path) -> str:
         gz = mb(e["pack"]["bytes"]) if e else ""
         zoom = f" (z{e['basemap']['maxzoom']})" if e and e["basemap"].get("maxzoom") is not None else ""
         status = "" if r["ok"] else " ❌"
+        search = mb(e["places"]["bytes"]) if e and e.get("places") else ""
         out.append(f"| {r['name']}{status} | {outcome(r)} | {r['batch']} | {edges} | {gz} | "
-                   f"{mb(r.get('basemap_bytes'))}{zoom} | {'' if cams is None else cams} | {r.get('seconds', '')} |")
+                   f"{mb(r.get('basemap_bytes'))}{zoom} | {search} | {'' if cams is None else cams} | "
+                   f"{r.get('seconds', '')} |")
     return "\n".join(out) + "\n"
 
 

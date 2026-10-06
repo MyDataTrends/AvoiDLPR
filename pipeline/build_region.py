@@ -1,12 +1,12 @@
-"""Build one region's road pack (and, with --basemap, its basemap) from OpenStreetMap.
+"""Build one region's road pack and search index (and, with --basemap, its basemap) from OpenStreetMap.
 
 Usage: python -m pipeline.build_region <region> [--work work] [--data data] [--basemap]
        python -m pipeline.build_region dallas --pbf some.osm.pbf   # an extract you already have
 
 The same steps as one region of `pipeline.build_batch`: download the region's state extracts, keep
 the roads, merge them, cut the region out (osmium-tool, `apt install osmium-tool`) and build the
-pack into data/packs/<region>.fwr. With --pbf the file is used as it is: no download, no clipping
-and no osmium. Then fetch the basemap (if you didn't pass --basemap), refresh the cameras and
+pack into data/packs/<region>.fwr and the search index into data/places/<region>.fwp. With --pbf
+the file is used as it is: no download, no clipping and no osmium. Then fetch the basemap (if you didn't pass --basemap), refresh the cameras and
 stage the release; docs/DEVELOPING.md has the commands.
 """
 
@@ -16,7 +16,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import build_pack
+from . import build_pack, places
 from .build_batch import Run, build_batch, run_checked
 from .regions import Region, get_region
 
@@ -27,6 +27,10 @@ def build_region(region: Region, work: Path, data: Path, *, pbf: Path | None = N
     pack = data / "packs" / f"{region.id}.fwr"
     if pbf is not None:
         build_pack.main([str(pbf), str(pack)])
+        try:
+            places.main([str(pbf), str(data / "places" / f"{region.id}.fwp")])
+        except ValueError as e:  # an extract of bare roads: no search for it, the map still works
+            print(f"no search index: {e}")
         return pack
     # A local build has nothing published to compare with: it keeps what it builds.
     row = build_batch([region], work, data, run=run, basemaps=basemap, decider=None)[0]

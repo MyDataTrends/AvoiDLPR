@@ -4,6 +4,9 @@ Committed (small, synthetic):
   packages/router/test/fixtures/grid.osm, grid.fwr, grid.json
       5x5 street grid (200 m blocks) with a one-way row, a turn restriction, a traffic
       signal, a dead-end stub, a footway and a disconnected way.
+  packages/router/test/fixtures/town.osm, town.fwp
+      a small town on the grid's streets and its place index (pipeline/places.py): named
+      streets, house numbers written every which way, and places, for the search.
   packages/router/test/fixtures/reference_cases.json
       sector distances, captures and direction parsing from the spike's Python reference
       (spike/routing/geometry.py), so the TypeScript port stays in lockstep.
@@ -85,6 +88,98 @@ def grid_osm() -> str:
                '<tag k="type" v="restriction"/><tag k="restriction" v="no_right_turn"/></relation>')
     out.append("</osm>")
     return "\n".join(out) + "\n"
+
+
+def town_osm() -> str:
+    """A small town on the grid's streets, for the place index and search.
+
+    Gridville (around the grid) and Eastville, 5 km east, both have a Main Street. House numbers
+    are written the ways real data writes them: abbreviated ("N Oak Ave"), without the direction
+    or the type, with a letter ("104B"), two in one ("20;22"), twice (a point and its building),
+    on a street no road has (Hidden Lane), and as nonsense. Places cover the kinds and the
+    repeats the index has to deal with.
+    """
+    dlat = BLOCK_M / (math.radians(1.0) * EARTH_RADIUS_M)
+    dlon = dlat / math.cos(math.radians(GRID_LAT0))
+    nodes: dict[int, tuple[float, float, dict]] = {}
+    ways: list[tuple[int, list[int], dict]] = []
+    ids = iter(range(1000, 9000))
+
+    def node(r: float, c: float, tags: dict | None = None) -> int:
+        nid = next(ids)
+        nodes[nid] = (round(GRID_LON0 + (c - 2) * dlon, 7), round(GRID_LAT0 + (r - 2) * dlat, 7), tags or {})
+        return nid
+
+    def way(wid: int, points: list[tuple[float, float]], tags: dict) -> None:
+        ways.append((wid, [node(r, c) for r, c in points], tags))
+
+    def box(wid: int, r: float, c: float, half: float, tags: dict) -> None:
+        way(wid, [(r - half, c - half), (r - half, c + half), (r + half, c + half), (r + half, c - half),
+                  (r - half, c - half)], tags)
+
+    def address(r: float, c: float, number: str, street: str, **more: str) -> None:
+        node(r, c, {"addr:housenumber": number, "addr:street": street, **{f"addr:{k}": v for k, v in more.items()}})
+
+    res, primary = {"highway": "residential"}, {"highway": "primary"}
+    way(1, [(2, 0), (2, 1), (2, 2)], {**primary, "name": "Main Street"})
+    way(2, [(2, 2), (2, 3), (2, 4)], {**primary, "name": "Main Street"})  # the same street, a second piece
+    way(3, [(0, 0), (0, 4)], {**res, "name": "Elm Street"})
+    way(4, [(0, 2), (2, 2), (4, 2)], {**res, "name": "North Oak Avenue"})
+    way(5, [(4, 0), (4, 4)], {**res, "name": "Mill Road"})
+    way(6, [(2, 27), (2, 28), (2, 29)], {**primary, "name": "Main Street"})  # Eastville's
+    way(7, [(1, 1), (1, 3)], {"highway": "footway", "name": "Grid Trail"})  # not a road
+    node(2, 2, {"place": "town", "name": "Gridville"})
+    node(2.3, 28, {"place": "town", "name": "Eastville"})
+    node(0, 28, {"place": "village", "name": "Smallville"})
+    node(4, 0, {"place": "neighbourhood", "name": "Old Town"})
+
+    for c, number in [(0.5, "100"), (1.0, "102"), (1.5, "104"), (2.5, "106"), (3.5, "110")]:
+        address(1.9, c, number, "Main Street", city="GRIDVILLE")
+    address(1.92, 1.5, "104B", "Main Street")
+    box(20, 1.9, 1.0, 0.04, {"building": "house", "addr:housenumber": "102", "addr:street": "Main Street"})
+    address(1.9, 28, "100", "Main Street")
+    address(1.0, 2.1, "5", "N Oak Ave")
+    address(3.0, 2.1, "7", "N. Oak Ave.")
+    address(3.5, 2.1, "9", "Oak Avenue")  # no direction
+    address(0.1, 1.0, "1", "ELM")  # no type, and shouting
+    address(4.1, 1.0, "20;22", "Mill Road")
+    address(3.5, 3.5, "1", "Hidden Lane")  # a private lane the roads don't have
+    address(3.5, 3.7, "3", "Hidden Lane")
+    address(3.6, 3.6, "12", "12 Fake Street, Gridville")  # a whole address in the street field
+
+    node(2.1, 1.2, {"amenity": "cafe", "name": "Bean There", "addr:city": "GRIDVILLE"})
+    node(2.1, 28.2, {"amenity": "restaurant", "name": "Bean There"})
+    node(2.1, 3.2, {"amenity": "fuel", "brand": "Shell"})  # no name: the brand stands in
+    node(2.1, 2.6, {"shop": "supermarket", "name": "Grid Grocer"})
+    box(21, 2.1, 2.6, 0.05, {"building": "retail", "shop": "supermarket", "name": "Grid Grocer"})  # the same shop
+    node(2.2, 3.4, {"shop": "convenience", "name": "QT", "brand": "QuikTrip"})
+    node(2.2, 0.8, {"amenity": "bench", "name": "Memorial Bench"})  # nobody searches for benches
+    box(22, 3.0, 0.5, 0.15, {"natural": "water", "name": "Mirror Lake"})
+    way(23, [(4.5, 0), (4.5, 4)], {"waterway": "river", "name": "Grid River"})  # not a place
+    box(24, 0.0, 3.5, 0.3, {})  # the airport's outline, a relation member
+    out = ['<?xml version="1.0" encoding="UTF-8"?>', '<osm version="0.6" generator="flockwatch-fixtures">']
+    esc = lambda v: v.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")  # noqa: E731
+    tag = lambda tags: "".join(f'<tag k="{k}" v="{esc(v)}"/>' for k, v in tags.items())  # noqa: E731
+    for nid, (lon, lat, tags) in nodes.items():
+        out.append(f'  <node id="{nid}" version="1" lat="{lat}" lon="{lon}">{tag(tags)}</node>')
+    for wid, refs, tags in ways:
+        nds = "".join(f'<nd ref="{n}"/>' for n in refs)
+        out.append(f'  <way id="{wid}" version="1">{nds}{tag(tags)}</way>')
+    out.append('  <relation id="30" version="1"><member type="way" ref="24" role="outer"/>'
+               + tag({"type": "multipolygon", "aeroway": "aerodrome", "name": "Gridville Regional Airport",
+                      "iata": "GRV"}) + "</relation>")
+    out.append("</osm>")
+    return "\n".join(out) + "\n"
+
+
+def write_town() -> None:
+    from .places import build_index, counts, write_index
+
+    osm = TS_FIXTURES / "town.osm"
+    osm.write_text(town_osm())
+    ix = build_index(osm)
+    write_index(TS_FIXTURES / "town.fwp", ix, built_at="fixture")
+    print(f"town: {counts(ix)}")
 
 
 def write_grid() -> None:
@@ -203,6 +298,7 @@ def main() -> None:
     ap.add_argument("--dallas", action="store_true", help="also write the Dallas fixtures (needs data/)")
     args = ap.parse_args()
     write_grid()
+    write_town()
     write_reference_cases()
     if args.dallas:
         write_dallas()
