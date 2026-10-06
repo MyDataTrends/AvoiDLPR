@@ -181,11 +181,11 @@ npm run typecheck -w @flockwatch/web
 node ~/.claude/skills/playwright-skill/run.js apps/web/e2e/phone-and-location.cjs
 ```
 
-[`e2e/search.cjs`](e2e/search.cjs) (34 checks) covers search in Dallas: the phone search view
-with a keyboard open (faked, as headless browsers have none), a place by name, an address, a
-street, an approximate house number, coordinates, no match, the keyboard, swapping, naming a
-tapped spot, a place set back from the road still getting a route, and that search talks to
-nothing but the site. It needs Dallas's search index staged.
+[`e2e/search.cjs`](e2e/search.cjs) (37 checks) covers search in Dallas: the phone search view
+with a keyboard open (faked, as headless browsers have none), with and without a trip planned, a
+place by name, an address, a street, an approximate house number, coordinates, no match, the
+keyboard, swapping, naming a tapped spot, a place set back from the road still getting a route,
+and that search talks to nothing but the site. It needs Dallas's search index staged.
 
 [`e2e/areas.cjs`](e2e/areas.cjs) (28 checks) covers choosing an area: the first-visit chooser,
 search, picking by list and by location, remembering, trips that leave the area, and storage
