@@ -31,6 +31,27 @@ Dallas trips it takes 91 ms typically (357 ms for the slowest tenth), 5.9 search
 recommended route has 0.71 camera zones per trip against 0.70 for the budget search. 66 trips get
 one option, 115 two, 80 three and 39 four.
 
+## Place search
+
+The package also searches an area's place index (`.fwp`, built by `pipeline/places.py`), on the
+device like routing, so nothing typed is sent anywhere:
+
+```ts
+import { decodePlaces, PlaceSearch } from "@flockwatch/router";
+
+const search = new PlaceSearch(decodePlaces(placesBytes));
+search.search("104 main st", { near: [lon, lat] }); // addresses, streets, places, coordinates
+search.nearest(lon, lat);                           // what's here: the nearest address or place
+```
+
+A query is words in any order, each a whole word or the start of one, with street abbreviations
+read either way ("e belt line rd" finds East Belt Line Road). A leading number is a house number on
+the streets the rest names; one the map lacks is placed between its neighbours on the same side
+and marked `approximate`. A word can also match a place's kind ("airport") or town. Results rank
+by match, the place's rank (an airport above a shop) and distance from `near`, with less weight on
+distance for notable places. Dallas's index (19,800 streets, 243,000 addresses, 15,400 places)
+decodes in about 25 ms, takes 95 ms to prepare, and answers a query in 12 to 22 ms in Node.
+
 ## How it works
 
 - **Roads and cameras ship separately.** The road pack (`.fwr`, built by `pipeline/`) changes
@@ -93,6 +114,9 @@ budget cuts captures by 60% here, against 64% in the spike.
   600 node pairs.
 - **Dallas** (skipped without `data/`). Exposure is identical to `spike/routing/exposure.py` on
   all 4,571 (edge, site) pairs, all 300 trips route, and A\* matches Dijkstra on real trips.
+- **Search** (`test/fixtures/town.*`, a made-up town built by the real pipeline): streets, house
+  numbers written every which way, places by name, other name, brand and kind, the same name in
+  two towns, approximate numbers, coordinates, and naming a tapped spot.
 
 ## Known limits
 
