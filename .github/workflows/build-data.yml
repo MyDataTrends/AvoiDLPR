@@ -77,6 +77,8 @@ jobs:
     timeout-minutes: 15
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      # "success" when the bucket can be read: only then is the live manifest compared with.
+      bucket: ${{ steps.bucket.outcome }}
     steps:
       - uses: actions/checkout@v7
 
@@ -88,9 +90,12 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      # With a bucket, say now if it can't be used, not after the build.
+      # With a bucket, say now if it can't be used, not after the build. A run that publishes
+      # stops here; a dry run carries on without it, treating every region as new.
       - name: Check the bucket is set up and reachable
+        id: bucket
         if: env.R2_BUCKET != ''
+        continue-on-error: ${{ env.PUBLISH != 'true' }}
         run: bash .github/scripts/check-bucket.sh
 
       - name: Check each region lists every state it reaches into
@@ -149,7 +154,7 @@ jobs:
 
       # What's online decides what's new, unchanged or worth replacing.
       - name: Download the live manifest
-        if: env.R2_BUCKET != ''
+        if: needs.plan.outputs.bucket == 'success'
         run: |
           mkdir -p live
           aws s3 cp "s3://$R2_BUCKET/regions.json" live/regions.json --endpoint-url "$R2_ENDPOINT" --only-show-errors \
@@ -246,7 +251,7 @@ jobs:
       # The camera refresh won't replace a feed with one less than half its size, so it needs
       # the feeds that are live; and regions that weren't rebuilt keep their live manifest entry.
       - name: Download what's live
-        if: env.R2_BUCKET != ''
+        if: needs.plan.outputs.bucket == 'success'
         run: |
           mkdir -p live release
           aws s3 cp "s3://$R2_BUCKET/regions.json" live/regions.json --endpoint-url "$R2_ENDPOINT" || echo "no manifest online yet"
