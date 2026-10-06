@@ -172,13 +172,17 @@ def build_batch(regions: Sequence[Region], work: Path, data: Path, *, run: Run =
             entry = live_by_id.get(r.id)
             decision = decider(r.id, pack, entry, mode=mode, now=now) if decider else Decision("publish", "local build")
             row.update(status=decision.action, why=decision.why, changed=decision.changed)
-            if decision.action != "publish":
-                pack.unlink(missing_ok=True)  # staging keeps the live pack
 
+            # The basemap is cut to the pack's bounding box, so it comes before an unpublished
+            # pack is deleted: the monthly build refreshes an unchanged area's basemap too.
             wants_basemap = basemaps and (decision.action in ("publish", "unchanged") if mode == "full" else entry is None)
-            if wants_basemap and decision.action != "hold":
-                run(basemap_command(r.id, basemap_build or latest_basemap_build()))
-                row["basemap_bytes"] = (data / "basemap" / f"{r.id}.pmtiles").stat().st_size
+            try:
+                if wants_basemap and decision.action != "hold":
+                    run(basemap_command(r.id, basemap_build or latest_basemap_build()))
+                    row["basemap_bytes"] = (data / "basemap" / f"{r.id}.pmtiles").stat().st_size
+            finally:
+                if decision.action != "publish":
+                    pack.unlink(missing_ok=True)  # staging keeps the live pack
             row["ok"] = True
         except Exception as e:  # noqa: BLE001 - one bad region mustn't sink the batch
             row["error"] = f"{type(e).__name__}: {e}"

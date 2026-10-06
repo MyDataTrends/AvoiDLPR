@@ -210,6 +210,36 @@ def test_a_nightly_batch_rolls_states_forward_and_publishes_only_what_should_go(
     assert len(basemaps) == 1 and basemaps[0][basemaps[0].index("--region") + 1] == "a"
 
 
+def test_the_monthly_build_refreshes_an_unchanged_areas_basemap(tmp_path):
+    """The basemap script reads the pack's bounding box: an unchanged pack goes after it, not before."""
+    grid = write_pbf(tmp_path / "grid.osm.pbf")
+    pack = tmp_path / "data" / "packs" / "a.fwr"
+    seen = []
+
+    def run(cmd):  # curl brings a state, osmium writes the grid, the basemap script a stand-in
+        cmd = [str(c) for c in cmd]
+        if cmd[0] == "curl":
+            write_pbf(Path(cmd[cmd.index("-o") + 1]), sequence=4000)
+        elif "-o" in cmd:
+            shutil.copy(grid, cmd[cmd.index("-o") + 1])
+        if cmd[0] == "node":
+            seen.append(pack.exists())
+            out = tmp_path / "data" / "basemap" / "a.pmtiles"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"PMTiles")
+
+    def decider(region_id, pack_, live, *, mode, now):
+        from pipeline.decide import Decision
+        return Decision("unchanged", "same roads as the live pack")
+
+    a = Region("a", "A", (0, 0, 1, 1), (NC,))
+    report = build_batch.build_batch([a], tmp_path / "work", tmp_path / "data", run=run, mode="full",
+                                     live={"regions": [{"id": "a"}]}, decider=decider, basemap_build="20261103")
+    assert report[0]["ok"] and report[0]["status"] == "unchanged" and report[0]["basemap_bytes"] == 7
+    assert seen == [True]  # the pack was there for the basemap
+    assert not pack.exists()  # and gone after it: staging keeps the live one
+
+
 # ---------- staging only what changed ----------
 
 def test_an_unchanged_pack_keeps_its_published_file(tmp_path):
