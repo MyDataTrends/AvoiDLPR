@@ -43,6 +43,10 @@ on:
         description: "Upload to the bucket (untick for a dry run)"
         type: boolean
         default: true
+      rewind:
+        description: "roads mode: re-apply this many of the latest daily change files (harmless; for testing)"
+        required: false
+        default: "0"
 
 permissions:
   contents: read
@@ -164,9 +168,11 @@ jobs:
         env:
           BATCH: ${{ matrix.batch }}
           REGIONS: ${{ join(matrix.regions, ' ') }}
+          REWIND: ${{ inputs.rewind }}
         run: |
           args=""; for id in $REGIONS; do args="$args --region $id"; done
-          python -m pipeline.build_batch "$BATCH" $args --mode "$MODE" --live live/regions.json --report "reports/$BATCH.json"
+          python -m pipeline.build_batch "$BATCH" $args --mode "$MODE" --rewind "${REWIND:-0}" \
+            --live live/regions.json --report "reports/$BATCH.json"
 
       - name: Save the roads for the next nightly update
         if: always() && hashFiles('work/roads/*.state.json') != ''

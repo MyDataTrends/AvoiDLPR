@@ -98,6 +98,15 @@ def test_update_applies_the_changes_since_and_filters_again(tmp_path):
     assert again == (state, False)  # nothing new: nothing done
 
 
+def test_rewinding_re_applies_the_latest_changes(tmp_path):
+    calls = []
+    roads.fresh(NC, tmp_path, copying_runner(calls))
+    server = FakeServer(4000)  # nothing new since the download
+    assert roads.update(NC, tmp_path, copying_runner(calls), server=server)[1] is False
+    state, changed = roads.update(NC, tmp_path, copying_runner(calls), server=server, rewind=2)
+    assert changed and server.applied == [3999] and state["sequence"] == 4000
+
+
 def test_update_without_a_copy_or_with_changes_gone_starts_fresh(tmp_path):
     calls = []
     state, changed = roads.update(NC, tmp_path, copying_runner(calls), server=FakeServer(4003))
@@ -180,7 +189,7 @@ def test_a_nightly_batch_rolls_states_forward_and_publishes_only_what_should_go(
             out.write_bytes(b"PMTiles")
 
     stamps = {NC: "2026-10-09T20:00:00Z", SC: "2026-10-09T21:00:00Z"}
-    updater = lambda path, work, run: ({"timestamp": stamps[path]}, True)  # noqa: E731
+    updater = lambda path, work, run, rewind=0: ({"timestamp": stamps[path]}, True)  # noqa: E731
     outcomes = {"a": "publish", "b": "defer", "c": "unchanged"}
 
     def decider(region_id, pack, live, *, mode, now):

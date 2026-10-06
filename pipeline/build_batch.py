@@ -85,11 +85,11 @@ def latest_basemap_build(fetch=http_get) -> str:
 
 def prepare_sources(sources: Sequence[str], work: Path, run: Run, mode: str = "full",
                     updater: Callable[..., tuple[dict, bool]] = roads.update,
-                    downloader: Callable[..., dict] = roads.fresh) -> tuple[Path, dict[str, str | None]]:
+                    downloader: Callable[..., dict] = roads.fresh, rewind: int = 0) -> tuple[Path, dict[str, str | None]]:
     """Each state's roads, merged; returns (the merged file, {extract: when its data is from})."""
     files, when = [], {}
     for path in sources:
-        state = updater(path, work, run)[0] if mode == "roads" else downloader(path, work, run)
+        state = updater(path, work, run, rewind=rewind)[0] if mode == "roads" else downloader(path, work, run)
         files.append(roads.roads_file(work, path))
         when[path] = state.get("timestamp")
     if len(files) == 1:
@@ -101,7 +101,8 @@ def prepare_sources(sources: Sequence[str], work: Path, run: Run, mode: str = "f
 
 def build_batch(regions: Sequence[Region], work: Path, data: Path, *, run: Run = run_checked, mode: str = "full",
                 live: dict | None = None, basemap_build: str | None = None, basemaps: bool = True,
-                decider: Decide | None = decide, now: dt.datetime | None = None, **prepare) -> list[dict]:
+                decider: Decide | None = decide, now: dt.datetime | None = None, rewind: int = 0,
+                **prepare) -> list[dict]:
     """Build every region; returns one report row per region (`ok` False when it failed).
 
     `live` is the published regions.json, if there is one. `decider=None` publishes every pack
@@ -111,7 +112,7 @@ def build_batch(regions: Sequence[Region], work: Path, data: Path, *, run: Run =
     now = now or dt.datetime.now(dt.UTC)
     live_by_id = {e["id"]: e for e in (live or {}).get("regions", [])}
     merged, when = prepare_sources(list(dict.fromkeys(g for r in regions for g in r.geofabrik)), work, run, mode,
-                                   **prepare)
+                                   rewind=rewind, **prepare)
     clips = work / "regions"
     clips.mkdir(parents=True, exist_ok=True)
 
@@ -168,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--data", type=Path, default=Path("data"))
     ap.add_argument("--report", type=Path, help="write the per-region report here (JSON)")
     ap.add_argument("--no-basemap", action="store_true", help="road packs only")
+    ap.add_argument("--rewind", type=int, default=0,
+                    help="roads mode: re-apply this many of the latest change files (harmless; for testing)")
     args = ap.parse_args(argv)
 
     batches = {b["batch"]: b for b in plan(load_regions())}
@@ -182,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     live = json.loads(args.live.read_text(encoding="utf-8")) if args.live and args.live.exists() else None
     build = None if args.no_basemap else latest_basemap_build()
     report = build_batch(regions, args.work, args.data, mode=args.mode, live=live, basemap_build=build,
-                         basemaps=not args.no_basemap)
+                         basemaps=not args.no_basemap, rewind=args.rewind)
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps({"batch": args.batch, "mode": args.mode, "basemap_build": build,

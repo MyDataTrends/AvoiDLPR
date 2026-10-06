@@ -90,11 +90,13 @@ def fresh(path: str, work: Path, run: Run, *, replication: Callable[[Path], dict
 
 
 def update(path: str, work: Path, run: Run, *, server: Callable[[str], ReplicationServer] = ReplicationServer,
-           replication: Callable[[Path], dict | None] = replication_of) -> tuple[dict, bool]:
+           replication: Callable[[Path], dict | None] = replication_of, rewind: int = 0) -> tuple[dict, bool]:
     """Bring a state's roads up to date; returns (its replication state, whether anything changed).
 
     Without a cached copy, or one that can't be rolled forward (no replication position, or the
     changes since have been deleted from the server), it starts again from a fresh download.
+    `rewind` re-applies that many of the latest change files first: harmless (a change already
+    in the file changes nothing), and a way to run the whole path on a day nothing new came out.
     """
     roads, state = roads_file(work, path), read_state(work, path)
     if not roads.exists() or not state or not state.get("server") or not state.get("sequence"):
@@ -103,21 +105,23 @@ def update(path: str, work: Path, run: Run, *, server: Callable[[str], Replicati
     latest = repl.get_state_info()
     if latest is None:
         raise RuntimeError(f"{path}: can't read the replication state at {state['server']}")
-    if latest.sequence <= state["sequence"]:
+    start = max(1, state["sequence"] + 1 - rewind)
+    if latest.sequence < start:
         return state, False
     updated = roads.with_name(roads.name.replace(".osm.pbf", ".updated.osm.pbf"))
-    while state["sequence"] < latest.sequence:  # a backlog bigger than MAX_DIFF_KB takes more than one pass
+    while start <= latest.sequence:  # a backlog bigger than MAX_DIFF_KB takes more than one pass
         updated.unlink(missing_ok=True)
-        applied = repl.apply_diffs_to_file(str(roads), str(updated), state["sequence"] + 1, max_size=MAX_DIFF_KB)
+        applied = repl.apply_diffs_to_file(str(roads), str(updated), start, max_size=MAX_DIFF_KB)
         if applied is None:  # the changes we need aren't on the server any more
             updated.unlink(missing_ok=True)
             return fresh(path, work, run, replication=replication), True
         last, _newest = applied
-        if int(last) <= state["sequence"]:
-            raise RuntimeError(f"{path}: applying changes from {state['sequence'] + 1} made no progress")
+        if int(last) < start:
+            raise RuntimeError(f"{path}: applying changes from {start} made no progress")
         # pyosmium writes the position it reached (and its time) into the new file's header.
         state = replication(updated) or {"server": state["server"], "sequence": int(last), "timestamp": None}
         run(filter_command(updated, roads))  # drop the buildings and paths the changes brought in
         updated.unlink(missing_ok=True)
         write_state(work, path, state)
+        start = state["sequence"] + 1
     return state, True
