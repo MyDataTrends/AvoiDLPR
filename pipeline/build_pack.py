@@ -42,10 +42,12 @@ def main(argv: list[str] | None = None) -> None:
                     help="also write <out>.cameras.json (a local camera feed for tests and benchmarks) "
                          "from this directory of DeFlock region tiles. Production feeds come from "
                          "`python -m pipeline.refresh_cameras` instead")
+    ap.add_argument("--with-service", action="store_true",
+                    help="keep service roads (alleys, parking-lot lanes); packs leave them out by default")
     args = ap.parse_args(argv)
 
     t0 = time.perf_counter()
-    graph = build_graph(args.extract)
+    graph = build_graph(args.extract, include_service=args.with_service)
     built_at = dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
     meta = pack_meta(graph, args.extract.name, built_at)
     args.out.parent.mkdir(parents=True, exist_ok=True)

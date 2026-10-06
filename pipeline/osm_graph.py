@@ -37,6 +37,12 @@ HIGHWAY_CLASSES = list(DEFAULT_KMH)
 # Parking aisles and driveways would let routes cut through retail lots, which is both
 # unrealistic and exactly where retail-operated ALPRs sit.
 SKIP_SERVICE = {"parking_aisle", "driveway", "drive-through", "emergency_access"}
+# Packs leave out unnamed service roads by default. In Dallas they were 45% of all edges
+# (alleys, apartment-complex drives, untagged parking-lot lanes) yet almost never part of a
+# sensible route: a destination on one snaps to the nearest street instead. Dropping them
+# roughly halves a pack's download and memory, which is what lets a region cover a whole metro.
+# Named ones stay (2% of them in Dallas): campus loops, airport and mall roads, places a trip
+# can really end.
 NO_ACCESS = {"no", "private", "agricultural", "forestry"}
 _MAXSPEED = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(mph)?\s*$")
 _TURN_OF_KIND = {"left_turn": "left", "right_turn": "right", "straight_on": "straight",
@@ -63,6 +69,10 @@ def drivable_highway(tags: dict) -> str | None:
     return hw
 
 
+def _named_service(tags: dict) -> bool:
+    return "name" in tags and tags.get("service") != "alley"
+
+
 def travel_directions(tags: dict, hw: str) -> tuple[bool, bool]:
     oneway = tags.get("oneway", "")
     if oneway in ("-1", "reverse"):
@@ -85,8 +95,10 @@ def turn_class(h_in: float, h_out: float) -> str:
 
 
 class _Collector(osmium.SimpleHandler):
-    def __init__(self) -> None:
+    def __init__(self, include_service: bool = False) -> None:
         super().__init__()
+        self.include_service = include_service
+        self.service_ways_skipped = 0
         self.way_refs: list[np.ndarray] = []
         self.way_coords: list[np.ndarray] = []  # (k, 2) int64 micro-degrees (lon, lat)
         self.way_attrs: list[tuple[int, float, bool, bool, int]] = []  # class, km/h, fwd, rev, id
@@ -103,6 +115,9 @@ class _Collector(osmium.SimpleHandler):
         tags = {t.k: t.v for t in w.tags}
         hw = drivable_highway(tags)
         if hw is None or len(w.nodes) < 2:
+            return
+        if hw == "service" and not self.include_service and not _named_service(tags):
+            self.service_ways_skipped += 1
             return
         if not all(n.location.valid() for n in w.nodes):
             self.incomplete_ways += 1  # crosses the extract boundary
@@ -183,8 +198,8 @@ def _bearing(x0: float, y0: float, x1: float, y1: float) -> float:
     return math.degrees(math.atan2(x1 - x0, y1 - y0)) % 360.0
 
 
-def build_graph(path: str) -> RoadGraph:
-    h = _Collector()
+def build_graph(path: str, *, include_service: bool = False) -> RoadGraph:
+    h = _Collector(include_service)
     h.apply_file(str(path), locations=True)
     refs = np.concatenate(h.way_refs)
     coords = np.concatenate(h.way_coords)
@@ -274,7 +289,8 @@ def build_graph(path: str) -> RoadGraph:
 
     vkeep = np.repeat(keep_g, n_v)
     stats = {
-        "drivable_ways": len(h.way_refs), "incomplete_ways": h.incomplete_ways,
+        "drivable_ways": len(h.way_refs), "service_ways_skipped": h.service_ways_skipped,
+        "incomplete_ways": h.incomplete_ways,
         "geometries_dropped_outside_scc": int((~keep_g).sum()),
         "edges_dropped_outside_scc": int((~keep_e).sum()),
         "traffic_signals": len(h.signals),

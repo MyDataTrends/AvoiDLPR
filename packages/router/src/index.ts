@@ -8,6 +8,6 @@ export {
 export { SegmentGrid } from "./grid.ts";
 export { decodePack, type PackMeta, type RoadPack } from "./pack.ts";
 export {
-  type AlternativeRoutes, type BudgetRoute, type Route, Router, type RouterOptions, type RouteSite,
+  type AlternativeRoutes, type BudgetRoute, type Route, Router, type RouterOptions, type RouteSite, SNAP_MAX_M,
 } from "./router.ts";
 export { EdgeSearch, type Endpoint, NODE_EPS_M, nodeAt, type SearchPath, TURN_COST_S, turnCost } from "./search.ts";

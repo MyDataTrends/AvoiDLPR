@@ -1,6 +1,6 @@
 // The router lives here, off the main thread: decoding the pack, computing exposure and
 // searching never stall the map. The only thing it fetches is the map data it is told to load.
-import { type CameraRecord, type PackMeta, PROFILES, type Route, Router } from "@flockwatch/router";
+import { type CameraRecord, type PackMeta, PROFILES, type Route, Router, SNAP_MAX_M } from "@flockwatch/router";
 
 import type { CameraDTO, ProfileName, Request, Response, RouteDTO } from "./protocol.ts";
 
@@ -81,7 +81,7 @@ scope.onmessage = async (ev) => {
       if (!a || !b) {
         scope.postMessage({
           type: "noroute", id: msg.id,
-          reason: `There's no road within 250 m of the ${a ? "destination" : "start"}. Try a spot closer to a street.`,
+          reason: `There's no road within ${SNAP_MAX_M} m of the ${a ? "destination" : "start"}. Try a spot closer to a street.`,
         });
         return;
       }

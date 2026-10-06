@@ -1,6 +1,6 @@
 """Refresh the camera feed of every region from DeFlock: the hourly job.
 
-Usage: python -m pipeline.refresh_cameras [--out release] [--region dallas]
+Usage: python -m pipeline.refresh_cameras [--out release] [--region dallas] [--listed-in regions.json]
 
 Writes <out>/cameras/<region>.json, the same files `pipeline.release` stages. They are small and
 change often, so they're published separately from the road packs and the app revalidates them
@@ -16,7 +16,7 @@ import json
 import sys
 from pathlib import Path
 
-from .deflock import fetch_cameras
+from .deflock import caching, fetch_cameras
 from .regions import Region, load_regions
 
 SOURCE = "DeFlock region tiles (OpenStreetMap, ODbL)"
@@ -59,15 +59,22 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", type=Path, default=Path("release"))
     ap.add_argument("--region", help="only this region id (default: all)")
+    ap.add_argument("--listed-in", type=Path, metavar="MANIFEST",
+                    help="only the regions this manifest lists, if it exists (the hourly job passes the live "
+                         "regions.json, so a region that isn't published yet gets no feed)")
     args = ap.parse_args(argv)
     regions = [r for r in load_regions() if args.region in (None, r.id)]
+    if args.listed_in and args.listed_in.exists():
+        listed = {e["id"] for e in json.loads(args.listed_in.read_text(encoding="utf-8"))["regions"]}
+        regions = [r for r in regions if r.id in listed]
     if not regions:
         print(f"no such region: {args.region}", file=sys.stderr)
         return 2
+    fetch = caching()
     failed = 0
     for r in regions:
         try:
-            print(f"{r.id}: {refresh(r, args.out)} cameras -> {args.out / 'cameras' / (r.id + '.json')}")
+            print(f"{r.id}: {refresh(r, args.out, fetch=fetch)} cameras -> {args.out / 'cameras' / (r.id + '.json')}")
         except Exception as e:  # noqa: BLE001 - report every region, then fail the run
             failed += 1
             print(f"{r.id}: FAILED: {e}", file=sys.stderr)
