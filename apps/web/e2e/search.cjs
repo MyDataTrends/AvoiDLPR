@@ -138,6 +138,22 @@ async function type(page, field, text, expect) {
     await page.waitForTimeout(1500);
     await page.screenshot({ path: path.join(OUT, 'search-2-route.png') });
 
+    // ---------- searching again with a trip planned: the route options make way ----------
+    await page.locator('#toInput').tap();
+    await page.evaluate((px) => window.__keyboard(px), kb);
+    check('with a trip planned, the search view hides the route options', await searching(page) && await page.locator('#results').isHidden());
+    const covered = await page.evaluate(() => ['fromInput', 'toInput'].filter((id) => {
+      const r = document.getElementById(id).getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return !hit?.closest('.stop');
+    }));
+    check('and nothing covers the fields', covered.length === 0, covered.join(', '));
+    await page.screenshot({ path: path.join(OUT, 'search-3-with-trip.png') });
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => window.__keyboard(0));
+    check('closing it brings the route options back', !(await searching(page)) && await page.locator('#results').isVisible()
+      && (await value(page, '#toInput')) === 'American Airlines Center');
+
     // ---------- swapping keeps the names ----------
     await page.locator('#swap').tap();
     check('swapping swaps the names', (await value(page, '#fromInput')) === 'American Airlines Center' && (await value(page, '#toInput')) === '1500 Marilla Street');

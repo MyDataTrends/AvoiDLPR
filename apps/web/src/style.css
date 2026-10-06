@@ -728,9 +728,11 @@ footer {
     transition: none;
   }
 
-  html[data-searching="true"] .sheet-head,
-  html[data-searching="true"] .sheet-body > :not(.trip),
-  html[data-searching="true"] .trip > .row,
+  /* Everything but the fields and results goes. These outrank the sections' own rules, some of
+     which are by id (#results), so a planned trip's route options can't stay on screen. */
+  html[data-searching="true"] #panel .sheet-head,
+  html[data-searching="true"] #panel .sheet-body > :not(.trip),
+  html[data-searching="true"] #panel .trip > .row,
   html[data-searching="true"] .fab {
     display: none;
   }
@@ -741,6 +743,7 @@ footer {
     padding-bottom: 8px;
   }
 
+  /* The fields keep their height and the results take what's left. */
   html[data-searching="true"] .trip {
     display: flex;
     flex: 1;
