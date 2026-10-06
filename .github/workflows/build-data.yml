@@ -2,10 +2,11 @@ name: Build map data
 
 # One pipeline, two schedules:
 #
-#   monthly  (the 3rd, 06:00 UTC)  full: every state downloaded fresh, every road pack and basemap
-#                                  rebuilt; the baseline that corrects any drift.
+#   monthly  (the 3rd, 06:00 UTC)  full: every state downloaded fresh, every road pack, basemap and
+#                                  search index rebuilt; the baseline that corrects any drift.
 #   nightly  (07:30 UTC)           roads: each state's cached roads rolled forward with Geofabrik's
-#                                  daily changes (a few MB), road packs rebuilt, basemaps left.
+#                                  daily changes (a few MB), road packs rebuilt, basemaps and search
+#                                  indexes left.
 #
 #   plan     checks every region lists the states it reaches into (pipeline/check_regions.py)
 #            and splits the regions into batches of neighbouring states (pipeline/plan.py).
@@ -194,9 +195,9 @@ jobs:
         run: |
           args=""; for id in $REGIONS; do args="$args --region $id"; done
           python -m pipeline.release --part "$BATCH" $args --live live/regions.json
-          du -sh release/packs release/basemap 2>/dev/null || true
+          du -sh release/packs release/basemap release/places 2>/dev/null || true
 
-      - name: Upload the new packs and basemaps (new names, so nothing live changes yet)
+      - name: Upload the new packs, basemaps and search indexes (new names, so nothing live changes yet)
         if: env.PUBLISH == 'true'
         run: |
           set -e
@@ -206,6 +207,9 @@ jobs:
           fi
           if [ -d release/basemap ]; then
             $aws release/basemap "s3://$R2_BUCKET/basemap" --recursive --cache-control "public, max-age=31536000, immutable"
+          fi
+          if [ -d release/places ]; then
+            $aws release/places "s3://$R2_BUCKET/places" --recursive --content-type application/gzip --cache-control "public, max-age=31536000, immutable"
           fi
 
       - uses: actions/upload-artifact@v7

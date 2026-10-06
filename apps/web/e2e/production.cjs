@@ -63,10 +63,18 @@ function check(name, ok, detail = '') {
       await page.evaluate(() => fetch('https://example.com/', { mode: 'no-cors' }).then(() => false, () => true)));
 
     await page.locator('#mapLocate').tap();
-    await page.locator('#fromText', { hasText: 'Your location' }).waitFor({ timeout: 15_000 });
+    await page.waitForFunction(() => document.getElementById('fromInput').value.startsWith('Your location'), null, { timeout: 15_000 });
     await page.getByRole('button', { name: 'Try an example trip' }).tap();
     await page.locator('.option').first().waitFor({ timeout: 30_000 });
     check('routing works in the production build', (await page.locator('.option').count()) >= 2);
+
+    // ---------- search, its index from the data host ----------
+    await page.locator('#toInput').tap();
+    await page.locator('#toInput').fill('american airlines center');
+    await page.locator('#suggestions .suggest-name', { hasText: 'American Airlines Center' }).first().waitFor({ timeout: 60_000 });
+    check('search works in the production build, its index from the data host',
+      dataRequests.some((u) => /\/places\/dallas\.[0-9a-f]{10}\.fwp\.gz$/.test(u)));
+    await page.keyboard.press('Escape');
     await page.waitForTimeout(2000);
     await page.screenshot({ path: path.join(OUT, '10-production.png') });
 
@@ -100,6 +108,7 @@ function check(name, ok, detail = '') {
     check('service worker: the road pack, camera feed and manifest are cached for offline use',
       Boolean(data) && data[1].some((p) => /\/packs\/dallas\.[0-9a-f]{10}\.fwr\.gz$/.test(p)) && data[1].some((p) => p.endsWith('/cameras/dallas.json')) && data[1].some((p) => p.endsWith('/regions.json')),
       data ? data[1].join(', ') : 'none');
+    check('service worker: and the search index', Boolean(data) && data[1].some((p) => /\/places\/dallas\.[0-9a-f]{10}\.fwp\.gz$/.test(p)));
 
     // ---------- offline ----------
     offline = true;
@@ -111,6 +120,11 @@ function check(name, ok, detail = '') {
     await page.locator('.option').first().waitFor({ timeout: 30_000 });
     const offlineOptions = await page.locator('.option').count();
     check('offline: routing still works (roads and cameras come from the cache)', offlineOptions >= 2, `${offlineOptions} options`);
+    await page.locator('#toInput').tap();
+    await page.locator('#toInput').fill('elm st');
+    await page.locator('#suggestions .suggest-name', { hasText: 'Elm Street' }).first().waitFor({ timeout: 60_000 });
+    check('offline: search still works (its index comes from the cache)', true);
+    await page.keyboard.press('Escape');
     await ctx.setOffline(false);
     offline = false;
 
@@ -129,6 +143,15 @@ function check(name, ok, detail = '') {
     await tell('pack-ok', live);
     check('updates: once the new pack is proven, the older version goes', JSON.stringify(await packs()) === JSON.stringify([live]),
       JSON.stringify(await packs()));
+    const indexes = () => page.evaluate(async () => (await (await caches.open('fw-data-v1')).keys())
+      .map((r) => new URL(r.url).pathname).filter((p) => p.startsWith('/places/')).sort());
+    const liveIndex = (await indexes())[0];
+    await page.evaluate(async ([data, path]) => (await caches.open('fw-data-v1')).put(data + path.slice(1), new Response('an older index')),
+      [DATA, liveIndex.replace(/\.[0-9a-f]{10}\.fwp\.gz$/, '.0000000000.fwp.gz')]);
+    await tell('pack-ok', liveIndex);
+    check('updates: a proven search index drops its older version and leaves the road pack alone',
+      JSON.stringify(await indexes()) === JSON.stringify([liveIndex]) && JSON.stringify(await packs()) === JSON.stringify([live]),
+      `${JSON.stringify(await indexes())} ${JSON.stringify(await packs())}`);
     await tell('pack-bad', live);
     check('updates: a pack that failed its checks is dropped, so the next try downloads it', (await packs()).length === 0,
       JSON.stringify(await packs()));

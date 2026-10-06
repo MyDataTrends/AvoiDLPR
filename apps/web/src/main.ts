@@ -1,7 +1,7 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./style.css";
 
-import { LocalProjection } from "@flockwatch/router";
+import { LocalProjection, type PlaceResult } from "@flockwatch/router";
 import { type LngLat, LngLatBounds, Marker, Popup } from "maplibre-gl";
 
 import { Chooser, type PickHow } from "./chooser.ts";
@@ -13,6 +13,7 @@ import { accuracy, cameraZones, distance, duration, extraTime, gapTime, siteTitl
 import { insideBox, LocateError, locate } from "./location.ts";
 import { type CameraState, createMap, Overlays } from "./map.ts";
 import type { CameraDTO, LonLat, ProfileName, Request, Response, RouteDTO, SiteDTO, Stats } from "./protocol.ts";
+import { type PlacesFile, type Stop, StopSearch } from "./search.ts";
 import { Sheet } from "./sheet.ts";
 
 const PROFILE_NAMES: ProfileName[] = ["strict", "default", "loose"];
@@ -23,6 +24,11 @@ const MIN_ZONE_BANNER_MS = 1500;
 const ROUTE_TAP_SLOP_PX = 12;
 /** The router's cap on how much slower than the fastest an option may be. */
 const MAX_EXTRA_PERCENT = 50;
+/**
+ * How far from a place found by search to look for a road, in metres. A park's or an airport's
+ * middle can be well back from any road; a tap on the map gets the router's usual distance.
+ */
+const SEARCH_SNAP_M = 2500;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -81,7 +87,13 @@ $("regionName").textContent = regionLabel(region);
 $("regionBtn").hidden = manifest.regions.length < 2;
 setStatus(`Loading the ${region.name} road network…`);
 
-type Stop = "from" | "to";
+/** What a stop is called, when it's more than a point. */
+interface Named {
+  /** "Bean There", "104 Main Street", "Near 106 Main Street". */
+  text: string;
+  /** Found by search: routing looks further for a road near it (SEARCH_SNAP_M). */
+  searched: boolean;
+}
 
 /** What a drive preview and live navigation both keep while following a route. */
 interface Following {
@@ -130,6 +142,8 @@ const state = {
   /** Set when `from` came from the device's GPS (it then has an accuracy and no URL entry). */
   fromGps: null as { accuracyM: number } | null,
   to: null as LonLat | null,
+  /** The stops' names, from search or from what's nearest a tap. */
+  names: { from: null as Named | null, to: null as Named | null },
   /** Which end the next map tap sets. */
   target: "from" as Stop,
   profile: "default" as ProfileName,
@@ -149,6 +163,8 @@ const state = {
   drive: null as Drive | null,
   nav: null as Nav | null,
   sheetBeforeDrive: null as "peek" | "half" | "full" | null,
+  /** The sheet's height before a search opened it up, to go back to. */
+  sheetBeforeSearch: null as "peek" | "half" | "full" | null,
 };
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
@@ -206,14 +222,24 @@ function gpsDot(): HTMLElement {
 
 // ---------- state changes ----------
 
-/** Change either or both ends of the trip. Locations from GPS carry their accuracy. */
-function setStops(p: { from?: LonLat | null; to?: LonLat | null; gps?: { accuracyM: number } | null }): void {
+/**
+ * Change either or both ends of the trip. Locations from GPS carry their accuracy, and places
+ * from search their names; a stop without a name gets one from what's nearest it, if anything.
+ */
+function setStops(p: {
+  from?: LonLat | null; to?: LonLat | null; gps?: { accuracyM: number } | null; names?: Partial<Record<Stop, Named | null>>;
+}): void {
   stopNav();
   if ("from" in p) {
     state.from = p.from ?? null;
     state.fromGps = p.from ? (p.gps ?? null) : null;
+    state.names.from = p.names?.from ?? null;
   }
-  if ("to" in p) state.to = p.to ?? null;
+  if ("to" in p) {
+    state.to = p.to ?? null;
+    state.names.to = p.names?.to ?? null;
+  }
+  nameStops();
   state.target = state.from ? "to" : "from";
   state.fitNext = Boolean(state.from && state.to);
   state.notice = null;
@@ -293,7 +319,8 @@ function requestRoute(): void {
   state.routes = null;
   state.info = null;
   state.routing = Boolean(state.from && state.to && state.stats);
-  if (state.routing) send({ type: "route", id: ++state.routeId, from: state.from!, to: state.to! });
+  const reach = (stop: Stop) => (state.names[stop]?.searched ? SEARCH_SNAP_M : 0);
+  if (state.routing) send({ type: "route", id: ++state.routeId, from: state.from!, to: state.to!, snapM: [reach("from"), reach("to")] });
   render();
 }
 
@@ -312,6 +339,7 @@ worker.onmessage = (ev: MessageEvent<Response>) => {
       + `${s.packMB.toFixed(0)} MB network loaded in ${(s.loadMs / 1000).toFixed(1)} s`);
     renderFreshness(s);
     packLoaded(msg.pack);
+    search.load(); // the search index next, now the road map is in
     // New cameras mid-drive update the live zone checks, but don't re-plan the trip under you.
     if (state.nav) render();
     else requestRoute();
@@ -425,9 +453,9 @@ function summary(): string {
     }
     return `Loading the ${region.name} road map…`;
   }
-  if (!state.from && !state.to) return "Tap the map to set a start, or use your location";
-  if (!state.to) return "Tap the map to set your destination";
-  if (!state.from) return "Tap the map to set your start";
+  if (!state.from && !state.to) return "Search or tap the map to set a start";
+  if (!state.to) return "Where to? Search or tap the map";
+  if (!state.from) return "Search or tap the map to set your start";
   if (state.routing) return "Finding routes…";
   const route = selectedRoute();
   if (route && state.routes) {
@@ -443,13 +471,16 @@ function renderStops(): void {
   place(markers.to, state.to);
   overlays?.setAccuracy(state.from && state.fromGps ? { lon: state.from[0], lat: state.from[1], ...state.fromGps } : null);
 
-  const text = (p: LonLat | null, empty: string) => (p ? `${p[1].toFixed(4)}, ${p[0].toFixed(4)}` : empty);
-  $("fromText").textContent = state.fromGps
-    ? `Your location · ${accuracy(state.fromGps.accuracyM)}`
-    : text(state.from, state.target === "from" ? "Tap the map…" : "Choose a start");
-  $("toText").textContent = text(state.to, state.target === "to" ? "Tap the map…" : "Choose a destination");
-  $("targetFrom").setAttribute("aria-pressed", String(state.target === "from"));
-  $("targetTo").setAttribute("aria-pressed", String(state.target === "to"));
+  $("targetFrom").dataset.target = String(state.target === "from");
+  $("targetTo").dataset.target = String(state.target === "to");
+  search.refresh();
+}
+
+/** What a stop's field shows: its name, "Your location", or its coordinates. */
+function stopLabel(stop: Stop): string {
+  if (stop === "from" && state.from && state.fromGps) return `Your location · ${accuracy(state.fromGps.accuracyM)}`;
+  const p = state[stop];
+  return state.names[stop]?.text ?? (p ? `${p[1].toFixed(4)}, ${p[0].toFixed(4)}` : "");
 }
 
 function renderOverlays(): void {
@@ -881,10 +912,10 @@ document.addEventListener("visibilitychange", () => {
 
 // ---------- keeping the data current ----------
 //
-// Road packs are replaced now and then (pipeline/decide.py), basemaps monthly and camera feeds
-// hourly. An app left open, or kept in memory as an installed app, looks for news whenever it
-// comes back on screen (and every half hour while it's on): new cameras apply at once; a new
-// pack or basemap waits until no trip is being driven or previewed.
+// Road packs are replaced now and then (pipeline/decide.py), basemaps and search indexes monthly
+// and camera feeds hourly. An app left open, or kept in memory as an installed app, looks for
+// news whenever it comes back on screen (and every half hour while it's on): new cameras apply at
+// once; a new pack, search index or basemap waits until no trip is being driven or previewed.
 //
 // A new pack only becomes the one to keep once it has downloaded, matched its checksum and
 // decoded. Until then the service worker holds on to the last one that did, and the worker falls
@@ -950,7 +981,7 @@ async function checkForUpdates(force = false): Promise<void> {
   }
   const entry = latest.regions.find((r) => r.id === current.id);
   if (entry && entry.basemap.path !== current.basemap.path) pending.reload = true;
-  else if (entry && entry.pack.path !== current.pack.path) pending.pack = entry;
+  else if (entry && (entry.pack.path !== current.pack.path || entry.places?.path !== current.places?.path)) pending.pack = entry;
   if (state.stats) send({ type: "cameras", camerasUrl: dataUrl(current.cameras.path) });
   applyUpdates();
 }
@@ -963,12 +994,20 @@ function applyUpdates(): void {
     return;
   }
   if (pending.pack) {
-    current = pending.pack;
+    const next = pending.pack;
     pending.pack = null;
-    state.stats = null;
-    state.routes = null;
-    loadPack(current);
-    render();
+    const newPack = next.pack.path !== current.pack.path, newPlaces = next.places?.path !== current.places?.path;
+    current = next;
+    if (newPlaces) {
+      search.setFile(placesFile(current));
+      search.load();
+    }
+    if (newPack) {
+      state.stats = null;
+      state.routes = null;
+      loadPack(current);
+      render();
+    }
   }
 }
 
@@ -1056,6 +1095,68 @@ function showCamera(c: CameraDTO, at: LngLat): void {
   new Popup({ closeButton: true, maxWidth: "260px" }).setLngLat(at).setDOMContent(box).addTo(map);
 }
 
+// ---------- search ----------
+
+const placesFile = (r: RegionEntry): PlacesFile | null =>
+  r.places ? { url: dataUrl(r.places.path), bytes: r.places.bytes, sha256: r.places.sha256 } : null;
+
+const search = new StopSearch({ from: $<HTMLInputElement>("fromInput"), to: $<HTMLInputElement>("toInput") }, $("suggestions"), {
+  near: () => {
+    const c = map.getCenter();
+    return [c.lng, c.lat];
+  },
+  bbox: () => region.bbox,
+  label: stopLabel,
+  placeholder: (stop) => (state.target === stop ? "Search, or tap the map" : "Search for a place"),
+  focused: (stop) => {
+    state.target = stop;
+    renderStops();
+    if (sheet.isSheet) {
+      state.sheetBeforeSearch ??= sheet.state;
+      sheet.set("full"); // room for the results above the keyboard
+      $("trip").scrollIntoView({ block: "start" });
+    }
+  },
+  picked: (stop, r: PlaceResult) => {
+    state.sheetBeforeSearch = null; // the routes are next: the sheet goes to half
+    setStops({ [stop]: [r.lon, r.lat], names: { [stop]: { text: r.name, searched: r.kind === "place" || r.kind === "address" } } });
+    if (sheet.isSheet) sheet.set("half");
+  },
+  chooseOnMap: (stop) => {
+    state.target = stop;
+    state.sheetBeforeSearch = null;
+    renderStops();
+    if (sheet.isSheet) sheet.set("peek"); // so the map is there to tap
+  },
+  closed: () => {
+    if (sheet.isSheet && state.sheetBeforeSearch && sheet.state === "full") sheet.set(state.sheetBeforeSearch);
+    state.sheetBeforeSearch = null;
+  },
+  loaded: (url) => {
+    navigator.serviceWorker?.controller?.postMessage({ type: "pack-ok", url });
+    nameStops();
+  },
+  failed: (url, message) => {
+    console.warn(`search index ${url}: ${message}`);
+    navigator.serviceWorker?.controller?.postMessage({ type: "pack-bad", url });
+  },
+});
+search.setFile(placesFile(region));
+if (import.meta.env.DEV) Object.assign((window as unknown as { __fw: object }).__fw, { search });
+
+/** Name stops set by tapping the map after what's at that spot ("Near 104 Main Street"). */
+function nameStops(): void {
+  for (const stop of ["from", "to"] as const) {
+    const at = state[stop];
+    if (!at || state.names[stop] || (stop === "from" && state.fromGps)) continue;
+    void search.nearest(at).then((r) => {
+      if (!r || state[stop] !== at || state.names[stop]) return; // the stop moved on meanwhile
+      state.names[stop] = { text: (r.distanceM ?? 0) < 25 ? r.name : `Near ${r.name}`, searched: false };
+      renderStops();
+    });
+  }
+}
+
 // ---------- URL hash (never sent to a server) ----------
 
 /** Pins and the zone model, never a GPS location: a shared link must not reveal where you are. */
@@ -1106,6 +1207,7 @@ map.on("click", (e) => {
     return;
   }
   if (state.nav) return; // a stray tap mid-drive mustn't end the trip
+  search.dismiss();
   setStops({ [state.target]: [e.lngLat.lng, e.lngLat.lat] });
 });
 for (const layer of ["fw-cameras", "fw-cameras-any", "fw-routes"]) {
@@ -1120,17 +1222,10 @@ $<HTMLSelectElement>("profile").addEventListener("change", (e) => {
   setStatus("Recomputing camera zones…");
   send({ type: "profile", profile: state.profile });
 });
-for (const stop of ["from", "to"] as const) {
-  $(stop === "from" ? "targetFrom" : "targetTo").addEventListener("click", () => {
-    state.target = stop;
-    render();
-    if (sheet.isSheet) sheet.set("peek"); // so the map is there to tap
-  });
-}
 $("locate").addEventListener("click", () => void useMyLocation());
 $("mapLocate").addEventListener("click", () => void useMyLocation());
 $("swap").addEventListener("click", () => {
-  if (state.from || state.to) setStops({ from: state.to, to: state.from });
+  if (state.from || state.to) setStops({ from: state.to, to: state.from, names: { from: state.names.to, to: state.names.from } });
 });
 $("example").addEventListener("click", () => {
   if (region.example) setStops({ from: region.example.from, to: region.example.to });

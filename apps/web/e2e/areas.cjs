@@ -77,7 +77,7 @@ const chooserOpen = (page) => page.evaluate(() => document.getElementById('choos
     await ready(page);
     check('locating picks the area you are in (the one you sit deepest inside)',
       (await page.locator('#regionName').innerText()) === 'Dallas, TX', await page.locator('#regionName').innerText());
-    await page.locator('#fromText', { hasText: 'Your location' }).waitFor({ timeout: 15_000 });
+    await page.waitForFunction(() => document.getElementById('fromInput').value.startsWith('Your location'), null, { timeout: 15_000 });
     check('after a pick by location, the start is your location', true);
     check('the URL keeps neither the area nor the location', !/r=|from=/.test(await page.evaluate(() => location.hash)),
       await page.evaluate(() => location.hash));
@@ -100,12 +100,12 @@ const chooserOpen = (page) => page.evaluate(() => document.getElementById('choos
     // ---------- a trip that leaves the area ----------
     // A reload forgets a GPS start (it's never stored), so find it again first.
     await page.locator('#mapLocate').tap();
-    await page.locator('#fromText', { hasText: 'Your location' }).waitFor({ timeout: 15_000 });
+    await page.waitForFunction(() => document.getElementById('fromInput').value.startsWith('Your location'), null, { timeout: 15_000 });
     const tap = async (lon, lat) => {
       const p = await page.evaluate(([x, y]) => window.__fw.map.project([x, y]), [lon, lat]);
       await page.touchscreen.tap(p.x, p.y);
     };
-    await page.locator('#targetTo').tap();
+    check('with a start, map taps set the destination', (await page.locator('#targetTo').getAttribute('data-target')) === 'true');
     const [w, s, , n] = await page.evaluate(() => window.__fw.state.stats.bbox);
     await page.evaluate(([lon, lat]) => window.__fw.map.jumpTo({ center: [lon, lat], zoom: 9 }), [w, (s + n) / 2]);
     await page.waitForTimeout(400);
@@ -120,7 +120,7 @@ const chooserOpen = (page) => page.evaluate(() => document.getElementById('choos
     check('switching opens the other area', (await page.locator('#regionName').innerText()) === 'Fort Worth–Arlington, TX');
     const hash = await page.evaluate(() => location.hash);
     check('the destination came along; the GPS start did not', /to=/.test(hash) && !/from=/.test(hash), hash);
-    await page.locator('#fromText', { hasText: 'Your location' }).waitFor({ timeout: 15_000 });
+    await page.waitForFunction(() => document.getElementById('fromInput').value.startsWith('Your location'), null, { timeout: 15_000 });
     check('and the start was found again from the device', true);
     await ctx.close();
 

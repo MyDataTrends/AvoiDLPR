@@ -215,11 +215,11 @@ async function drag(page, selector, dy) {
     await ready(page);
     await page.locator('#mapLocate').tap();
     // Wait on the start field itself: the "Finding your location…" notice also contains the words.
-    await page.locator('#fromText', { hasText: 'Your location' }).waitFor({ timeout: 15_000 });
-    check('gps: start becomes "Your location" with its accuracy', /Your location · ±(25 m|80 ft)/.test(await page.locator('#fromText').innerText()));
+    await page.waitForFunction(() => document.getElementById('fromInput').value.startsWith('Your location'), null, { timeout: 15_000 });
+    check('gps: start becomes "Your location" with its accuracy', /Your location · ±(25 m|80 ft)/.test(await page.locator('#fromInput').inputValue()));
     check('gps: a location dot is drawn', (await page.locator('.gps-dot').count()) === 1);
     check('gps: the location is not written to the URL', !/from/.test(await page.evaluate(() => location.hash)), await page.evaluate(() => location.hash));
-    check('gps: next tap targets the destination', (await page.locator('#targetTo').getAttribute('aria-pressed')) === 'true');
+    check('gps: next tap targets the destination', (await page.locator('#targetTo').getAttribute('data-target')) === 'true');
     await settled(page);
     // Tap a known road 0.3-1.5 km from the fix, inside the visible map (above the sheet).
     const dest = await page.evaluate((pts) => {

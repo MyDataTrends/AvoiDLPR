@@ -84,7 +84,7 @@ jobs:
         run: |
           set -e
           if [ "${{ github.event_name }}" = "schedule" ] && [ "$(date -u +%H)" != "05" ]; then exit 0; fi
-          for prefix in packs/ basemap/; do
+          for prefix in packs/ basemap/ places/; do
             aws s3api list-objects-v2 --bucket "$R2_BUCKET" --prefix "$prefix" --endpoint-url "$R2_ENDPOINT" \
               --query 'Contents[].[Key,LastModified]' --output text >> listing.txt || true
           done

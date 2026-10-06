@@ -2,9 +2,11 @@
 
 Usage:
   python -m pipeline.release [--data data] [--out release]
-      Everything that's built in data/: packs, basemaps, fonts, cameras and regions.json.
+      Everything that's built in data/: packs, basemaps, search indexes, fonts, cameras and
+      regions.json.
   python -m pipeline.release --part NAME --region ID [--region ID ...]
-      One build batch: stages those regions' packs and basemaps and writes parts/NAME.json.
+      One build batch: stages those regions' packs, basemaps and search indexes and writes
+      parts/NAME.json.
   python -m pipeline.release --assemble [--live live.json]
       Merges every parts/*.json into regions.json. Regions that weren't rebuilt keep their entry
       from --live (the manifest that's online now), so rebuilding one city never drops the rest.
@@ -12,6 +14,7 @@ Usage:
     release/
       regions.json                       what exists, where, and how big (short cache)
       packs/<id>.<hash>.fwr.gz           road pack, gzipped, content-hashed (cache forever)
+      places/<id>.<hash>.fwp.gz          search index, gzipped, content-hashed (cache forever)
       basemap/<id>.<hash>.pmtiles        Protomaps extract, content-hashed (cache forever)
       basemap/assets/...                 label fonts and icon sprites (cache forever)
       cameras/<id>.json                  camera feed, rewritten hourly (revalidate)
@@ -35,6 +38,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from . import places as place_index
 from .pack import read_header
 from .regions import Region, load_regions
 
@@ -87,6 +91,27 @@ def gzip_pack(src: Path, dst: Path) -> None:
     tmp.replace(dst)
 
 
+def stage_places(region: Region, data: Path, out: Path, live: dict | None = None) -> dict | None:
+    """The region's search index entry: the one built in data/places, or the live one when nothing
+    was built (or what was built has the live one's fingerprint); None when there's neither."""
+    src, live_entry = data / "places" / f"{region.id}.fwp", (live or {}).get("places")
+    if not src.exists():
+        return live_entry
+    header = place_index.read_header(src)
+    if live_entry and live_entry.get("fingerprint") == header["fingerprint"]:
+        return live_entry
+    gz = out / "places" / f"{region.id}.fwp.gz.tmp-src"
+    gzip_pack(src, gz)
+    path, sha = _hashed(gz, out / "places", region.id, ".fwp.gz")
+    gz.unlink()
+    return {
+        "path": path.relative_to(out).as_posix(), "encoding": "gzip", "bytes": path.stat().st_size,
+        "raw_bytes": src.stat().st_size, "sha256": sha, "built_at": header["built_at"],
+        "fingerprint": header["fingerprint"], "counts": header["counts"],
+        **({"osm_at": header["osm_at"]} if header.get("osm_at") else {}),
+    }
+
+
 def pmtiles_maxzoom(path: Path) -> int | None:
     with open(path, "rb") as f:
         head = f.read(127)
@@ -94,7 +119,8 @@ def pmtiles_maxzoom(path: Path) -> int | None:
 
 
 def stage_region(region: Region, data: Path, out: Path, live: dict | None = None) -> dict | None:
-    """Stage one region's pack and basemap; returns its manifest entry (None if there's nothing to list).
+    """Stage one region's pack, basemap and search index; returns its manifest entry (None if
+    there's nothing to list: a region needs a pack and a basemap; the search index is optional).
 
     `live` is the region's entry in the published manifest. A part that wasn't rebuilt (the
     nightly update builds no basemaps, and leaves out packs it decided not to publish) keeps the
@@ -143,6 +169,9 @@ def stage_region(region: Region, data: Path, out: Path, live: dict | None = None
         "basemap": base_entry,
         "cameras": {"path": f"cameras/{region.id}.json"},
     }
+    places = stage_places(region, data, out, live)
+    if places:
+        entry["places"] = places
     if region.example:
         entry["example"] = {"from": list(region.example[0]), "to": list(region.example[1])}
     return entry
@@ -237,8 +266,9 @@ def stage_release(data: Path, out: Path, regions: list[Region]) -> dict:
 def _summary(manifest_or_entries) -> None:
     entries = manifest_or_entries["regions"] if isinstance(manifest_or_entries, dict) else manifest_or_entries
     for r in entries:
+        search = f", search {r['places']['bytes'] / 1e6:.1f} MB" if r.get("places") else ", no search index"
         print(f"{r['id']}: pack {r['pack']['bytes'] / 1e6:.1f} MB gzipped ({r['pack']['edges']:,} edges), "
-              f"basemap {r['basemap']['bytes'] / 1e6:.1f} MB")
+              f"basemap {r['basemap']['bytes'] / 1e6:.1f} MB{search}")
 
 
 def main(argv: list[str] | None = None) -> int:

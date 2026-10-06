@@ -1,10 +1,11 @@
-"""Which files in the bucket nothing points at any more: superseded road packs and basemaps.
+"""Which files in the bucket nothing points at any more: superseded road packs, basemaps and
+search indexes.
 
 Usage: python -m pipeline.prune --manifest regions.json [--previous regions.prev.json]
                                 --listing listing.txt [--min-age-hours 24]
 
 Reads the live manifest, the one it replaced (the publish step keeps it as regions.prev.json),
-and a listing of the bucket's objects under packs/ and basemap/, one per line as
+and a listing of the bucket's objects under packs/, basemap/ and places/, one per line as
 `<key>\\t<last modified>` (what `aws s3api list-objects-v2 --query
 'Contents[].[Key,LastModified]' --output text` prints), and prints the keys to delete.
 
@@ -12,7 +13,7 @@ A file stays while the live manifest names it, and for --min-age-hours after a p
 previous manifest names it (a page that loaded that one may still fetch its files). A file
 younger than that stays too, named or not: a build uploads its new files before it publishes the
 manifest that names them. A line without a timestamp counts as new. Fonts and sprites
-(basemap/assets/), and anything outside packs/ and basemap/, are never touched.
+(basemap/assets/), and anything outside packs/, basemap/ and places/, are never touched.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ import json
 import sys
 from pathlib import Path
 
-PRUNABLE = ("packs/", "basemap/")
+PRUNABLE = ("packs/", "basemap/", "places/")
 NEVER = ("basemap/assets/",)
 
 
@@ -45,7 +46,8 @@ def parse_listing(text: str) -> dict[str, dt.datetime | None]:
 
 
 def _paths(manifest: dict) -> set[str]:
-    return {path for r in manifest.get("regions", []) for path in (r["pack"]["path"], r["basemap"]["path"])}
+    return {path for r in manifest.get("regions", [])
+            for path in (r["pack"]["path"], r["basemap"]["path"], (r.get("places") or {}).get("path")) if path}
 
 
 def stale_keys(manifest: dict, objects: dict[str, dt.datetime | None], *, now: dt.datetime, min_age_hours: float,

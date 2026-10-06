@@ -2,11 +2,13 @@
 
     work/roads/<extract>.osm.pbf     the state's drivable roads and turn restrictions
     work/roads/<extract>.state.json  {"server", "sequence", "timestamp"}: which change it holds
+    work/places/<extract>.osm.pbf    what the search index needs (pipeline/places.py); monthly only
 
-`fresh` downloads a state's extract and keeps the roads (`osmium tags-filter`). `update` applies
-the change files Geofabrik has published since (a few megabytes a day per state, read with
-pyosmium) and filters again: that's how the nightly build follows the map without downloading
-every state again. The build workflow caches work/roads between runs.
+`fresh` downloads a state's extract and keeps the roads (`osmium tags-filter`); for the monthly
+build, also what the search index needs. `update` applies the change files Geofabrik has published
+since (a few megabytes a day per state, read with pyosmium) and filters again: that's how the
+nightly build follows the map without downloading every state again. The build workflow caches
+work/roads between runs.
 
 One thing a filtered file can't do: a change that joins a road to a node only something else used
 (a street extended to meet a footpath) leaves that road without the node, and the graph builder
@@ -23,6 +25,7 @@ import osmium
 from osmium.replication.server import ReplicationServer
 
 from .osm_graph import HIGHWAY_CLASSES
+from .places import places_filter_command
 from .regions import geofabrik_url
 
 Run = Callable[[Sequence[str]], None]
@@ -37,6 +40,10 @@ def slug(path: str) -> str:
 
 def roads_file(work: Path, path: str) -> Path:
     return work / "roads" / f"{slug(path)}.osm.pbf"
+
+
+def places_file(work: Path, path: str) -> Path:
+    return work / "places" / f"{slug(path)}.osm.pbf"
 
 
 def state_file(work: Path, path: str) -> Path:
@@ -74,8 +81,10 @@ def write_state(work: Path, path: str, state: dict) -> None:
     state_file(work, path).write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
 
-def fresh(path: str, work: Path, run: Run, *, replication: Callable[[Path], dict | None] = replication_of) -> dict:
-    """Download a state, keep its roads; returns its replication state (sequence 0 if unknown)."""
+def fresh(path: str, work: Path, run: Run, *, replication: Callable[[Path], dict | None] = replication_of,
+          places: bool = False) -> dict:
+    """Download a state, keep its roads (and with `places`, what the search index needs); returns its
+    replication state (sequence 0 if unknown)."""
     raw = work / "src" / f"{slug(path)}.osm.pbf"
     roads = roads_file(work, path)
     raw.parent.mkdir(parents=True, exist_ok=True)
@@ -84,7 +93,10 @@ def fresh(path: str, work: Path, run: Run, *, replication: Callable[[Path], dict
         run(download_command(geofabrik_url(path), raw))
     state = replication(raw) or {"server": None, "sequence": 0, "timestamp": None}
     run(filter_command(raw, roads))
-    raw.unlink(missing_ok=True)  # the runner's disk is small; only the roads are needed
+    if places:
+        places_file(work, path).parent.mkdir(parents=True, exist_ok=True)
+        run(places_filter_command(raw, places_file(work, path)))
+    raw.unlink(missing_ok=True)  # the runner's disk is small; only the filtered files are needed
     write_state(work, path, state)
     return state
 

@@ -16,6 +16,10 @@ Usage: python -m pipeline.build_batch <batch> [--region ID ...] [--mode full|roa
    published is deleted, so staging keeps the live one.
 4. Basemaps (apps/web/scripts/fetch-basemap.mjs -> data/basemap/<id>.pmtiles): in full mode for
    every region being published or unchanged; in roads mode only for a region with none online.
+5. In full mode, each region's search index (pipeline/places.py -> data/places/<id>.fwp): named
+   places, streets and house numbers, cut out of the states' places files the same way. Roads mode
+   leaves the live one. An index that fails to build is reported; the region still ships without
+   a new one.
 
 A region that fails, or comes out too big for a phone, is reported and left out; the rest of the
 batch still builds. The report lists every region's outcome, size and timing, and the build
@@ -34,7 +38,7 @@ import traceback
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from . import build_pack, roads
+from . import build_pack, places, roads
 from .decide import Decision, decide
 from .deflock import http_get
 from .pack import read_header
@@ -63,9 +67,11 @@ def merge_command(sources: Sequence[Path], target: Path) -> list[str]:
     return ["osmium", "merge", *(str(s) for s in sources), "--overwrite", "-o", str(target)]
 
 
-def extract_command(region: Region, source: Path, target: Path) -> list[str]:
+def extract_command(region: Region, source: Path, target: Path, strategy: str = "complete_ways") -> list[str]:
+    """Cut a region out, keeping ways that cross its edge whole. (The places use "smart", which also
+    completes multipolygons: an airport or a mall whose outline crosses the edge.)"""
     w, s, e, n = region.clip_bbox
-    return ["osmium", "extract", "-b", f"{w},{s},{e},{n}", "--strategy", "complete_ways", "--overwrite",
+    return ["osmium", "extract", "-b", f"{w},{s},{e},{n}", "--strategy", strategy, "--overwrite",
             "-o", str(target), str(source)]
 
 
@@ -89,7 +95,7 @@ def prepare_sources(sources: Sequence[str], work: Path, run: Run, mode: str = "f
     """Each state's roads, merged; returns (the merged file, {extract: when its data is from})."""
     files, when = [], {}
     for path in sources:
-        state = updater(path, work, run, rewind=rewind)[0] if mode == "roads" else downloader(path, work, run)
+        state = updater(path, work, run, rewind=rewind)[0] if mode == "roads" else downloader(path, work, run, places=True)
         files.append(roads.roads_file(work, path))
         when[path] = state.get("timestamp")
     if len(files) == 1:
@@ -97,6 +103,32 @@ def prepare_sources(sources: Sequence[str], work: Path, run: Run, mode: str = "f
     merged = work / "merged.osm.pbf"
     run(merge_command(files, merged))
     return merged, when
+
+
+def prepare_places(sources: Sequence[str], work: Path, run: Run) -> Path | None:
+    """The states' places files merged into one (None when there are none: roads mode). The
+    states' own files go once merged: the runner's disk is small."""
+    files = [f for path in sources if (f := roads.places_file(work, path)).exists()]
+    if len(files) <= 1:
+        return files[0] if files else None
+    merged = work / "places-merged.osm.pbf"
+    run(merge_command(files, merged))
+    for f in files:
+        f.unlink(missing_ok=True)
+    return merged
+
+
+def build_places(region: Region, source: Path, clips: Path, data: Path, run: Run, *, built_at: str,
+                 osm_at: str | None) -> dict:
+    """One region's search index; returns its report fields."""
+    clip = clips / f"{region.id}.places.osm.pbf"
+    run(extract_command(region, source, clip, strategy="smart"))
+    try:
+        ix = places.build_index(clip)
+    finally:
+        clip.unlink(missing_ok=True)
+    size = places.write_index(data / "places" / f"{region.id}.fwp", ix, built_at=built_at, osm_at=osm_at)
+    return {"places": places.counts(ix), "places_bytes": size}
 
 
 def build_batch(regions: Sequence[Region], work: Path, data: Path, *, run: Run = run_checked, mode: str = "full",
@@ -111,8 +143,9 @@ def build_batch(regions: Sequence[Region], work: Path, data: Path, *, run: Run =
     work.mkdir(parents=True, exist_ok=True)
     now = now or dt.datetime.now(dt.UTC)
     live_by_id = {e["id"]: e for e in (live or {}).get("regions", [])}
-    merged, when = prepare_sources(list(dict.fromkeys(g for r in regions for g in r.geofabrik)), work, run, mode,
-                                   rewind=rewind, **prepare)
+    sources = list(dict.fromkeys(g for r in regions for g in r.geofabrik))
+    merged, when = prepare_sources(sources, work, run, mode, rewind=rewind, **prepare)
+    places_source = prepare_places(sources, work, run) if mode == "full" else None
     clips = work / "regions"
     clips.mkdir(parents=True, exist_ok=True)
 
@@ -139,18 +172,29 @@ def build_batch(regions: Sequence[Region], work: Path, data: Path, *, run: Run =
             entry = live_by_id.get(r.id)
             decision = decider(r.id, pack, entry, mode=mode, now=now) if decider else Decision("publish", "local build")
             row.update(status=decision.action, why=decision.why, changed=decision.changed)
-            if decision.action != "publish":
-                pack.unlink(missing_ok=True)  # staging keeps the live pack
 
+            # The basemap is cut to the pack's bounding box, so it comes before an unpublished
+            # pack is deleted: the monthly build refreshes an unchanged area's basemap too.
             wants_basemap = basemaps and (decision.action in ("publish", "unchanged") if mode == "full" else entry is None)
-            if wants_basemap and decision.action != "hold":
-                run(basemap_command(r.id, basemap_build or latest_basemap_build()))
-                row["basemap_bytes"] = (data / "basemap" / f"{r.id}.pmtiles").stat().st_size
+            try:
+                if wants_basemap and decision.action != "hold":
+                    run(basemap_command(r.id, basemap_build or latest_basemap_build()))
+                    row["basemap_bytes"] = (data / "basemap" / f"{r.id}.pmtiles").stat().st_size
+            finally:
+                if decision.action != "publish":
+                    pack.unlink(missing_ok=True)  # staging keeps the live pack
             row["ok"] = True
         except Exception as e:  # noqa: BLE001 - one bad region mustn't sink the batch
             row["error"] = f"{type(e).__name__}: {e}"
             row["status"] = "failed"
             traceback.print_exc()
+        if places_source is not None and row["ok"]:
+            try:
+                row.update(build_places(r, places_source, clips, data, run,
+                                        built_at=now.isoformat(timespec="seconds"), osm_at=osm_at))
+            except Exception as e:  # noqa: BLE001 - search is extra: the region still ships
+                row["places_error"] = f"{type(e).__name__}: {e}"
+                traceback.print_exc()
         row["seconds"] = round(time.perf_counter() - t0, 1)
         report.append(row)
         print(f"{r.id}: {row['status']}" + (f" ({row.get('why') or row.get('error')})" if row.get("why") or row.get("error") else ""),

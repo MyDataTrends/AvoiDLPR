@@ -1,7 +1,7 @@
 // Where the app's data lives, and what it says it has.
 //
 // The release (pipeline/release.py) is a plain directory of files: regions.json, packs/,
-// cameras/ and basemap/. In dev and on `npm run phone` this site serves it itself; in
+// places/, cameras/ and basemap/. In dev and on `npm run phone` this site serves it itself; in
 // production it is object storage, named by VITE_DATA_BASE at build time. Everything else
 // is resolved from the manifest, so adding a city is a data change, not a code change.
 
@@ -31,6 +31,11 @@ export interface RegionEntry {
   pack: { path: string; encoding?: "gzip"; bytes: number; raw_bytes?: number; sha256: string; built_at: string; edges?: number };
   basemap: { path: string; bytes: number; sha256: string; maxzoom?: number | null };
   cameras: { path: string };
+  /** The search index (pipeline/places.py); an area built before search existed has none. */
+  places?: {
+    path: string; encoding?: "gzip"; bytes: number; raw_bytes?: number; sha256: string; built_at: string;
+    counts?: { streets: number; addresses: number; places: number };
+  };
   /** A trip worth showing off, if the region defines one. */
   example?: { from: [number, number]; to: [number, number] };
 }

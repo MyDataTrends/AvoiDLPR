@@ -8,9 +8,9 @@ FlockWatch (`@flockwatch/router`, `@flockwatch/web`).
 
 | Path | What |
 |---|---|
-| [pipeline/](../pipeline) | Python: OSM extracts → road packs, DeFlock → camera feeds, staging a release. `regions.json` lists the 135 areas |
-| [packages/router](../packages/router) | TypeScript on-device router (zone predicate, exposure, edge-based A\*, route options) |
-| [apps/web](../apps/web) | The app: MapLibre + self-hosted Protomaps basemap, routing in a Web Worker, installable and offline-capable |
+| [pipeline/](../pipeline) | Python: OSM extracts → road packs and search indexes, DeFlock → camera feeds, staging a release. `regions.json` lists the 135 areas |
+| [packages/router](../packages/router) | TypeScript on-device router (zone predicate, exposure, edge-based A\*, route options) and place search (`places.ts`) |
+| [apps/web](../apps/web) | The app: MapLibre + self-hosted Protomaps basemap, routing and search in Web Workers, installable and offline-capable |
 | [.github/workflows](../.github/workflows) | CI, the hourly camera refresh, the monthly data build |
 | [spike/FINDINGS.md](../spike/FINDINGS.md) | Data spike: where the camera data comes from, coverage, direction quality |
 | [spike/routing/ROUTING.md](../spike/routing/ROUTING.md) | Routing spike: capture-zone math, Dallas trade-offs, engine comparison |
@@ -27,12 +27,13 @@ GitHub, so locally you only need them to build an area yourself.
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
 npm install
 
-# Data for one region (Dallas): road pack, basemap, cameras, then stage the release the app loads
+# Data for one region (Dallas): road pack, search index, basemap, cameras, then stage the release
 .venv/Scripts/python -m pipeline.build_pack spike/routing/data/Dallas.osm.pbf data/packs/dallas.fwr
+.venv/Scripts/python -m pipeline.places spike/routing/data/Dallas.osm.pbf data/places/dallas.fwp
 npm run fetch-basemap -w @flockwatch/web
 .venv/Scripts/python -m pipeline.refresh_cameras --out release
-.venv/Scripts/python -m pipeline.release             # writes release/ (regions.json, packs/, basemap/, cameras/)
-.venv/Scripts/python -m pipeline.fixtures --dallas   # test fixtures; the grid ones are committed
+.venv/Scripts/python -m pipeline.release             # writes release/ (regions.json, packs/, places/, basemap/, cameras/)
+.venv/Scripts/python -m pipeline.fixtures --dallas   # test fixtures; the grid and town ones are committed
 
 npm test && npm run typecheck                         # TypeScript
 .venv/Scripts/python -m pytest -q pipeline spike/routing
@@ -44,10 +45,12 @@ npm run phone -w @flockwatch/web                      # serve to your phone over
 
 The browser tests in `apps/web/e2e/` run with Playwright against the dev server and the staged
 release: `phone-and-location.cjs` (layout, route options, GPS start, preview), `areas.cjs` (the
-area chooser and switching), `navigate.cjs` (live navigation, fed GPS fixes) and
-`updates.cjs` (a damaged pack falls back to the last good one; updates go in between trips;
-new cameras apply at once) and `production.cjs` (the production build: headers, CSP, the service
-worker and its update handling, offline; it needs the two servers named at its top). `readme-screenshots.cjs` retakes the screenshots in the README.
+area chooser and switching), `search.cjs` (places, addresses, streets and coordinates in the From
+and To fields; it needs Dallas's search index staged), `navigate.cjs` (live navigation, fed GPS
+fixes), `updates.cjs` (a damaged pack falls back to the last good one; updates go in between
+trips; new cameras apply at once) and `production.cjs` (the production build: headers, CSP, the
+service worker and its update handling, offline; it needs the two servers named at its top).
+`readme-screenshots.cjs` retakes the screenshots in the README.
 
 ## The areas, and how they're built
 
@@ -57,8 +60,10 @@ Geofabrik extract of every state the rectangle reaches into (`geofabrik`, home s
 
 The monthly workflow (`.github/workflows/build-data.yml`) groups the areas into batches of
 neighbouring states (`python -m pipeline.plan`). Each batch runs `pipeline.build_batch`, which
-downloads each state once, keeps only the drivable roads and turn restrictions, merges them, cuts
-out every area and builds its road pack and basemap; `pipeline.release --part` stages the result.
+downloads each state once, keeps only the drivable roads and turn restrictions (and, separately,
+what search needs: named places, house numbers and the outlines of named areas), merges them, cuts
+out every area and builds its road pack, search index and basemap; `pipeline.release --part`
+stages the result.
 A final job refreshes the cameras, merges the batches with the live manifest
 (`pipeline.release --assemble`) and publishes; `pipeline.report` writes the run summary.
 
@@ -76,3 +81,26 @@ or hold. docs/DEPLOY.md, "Keeping the data fresh", has the rules.
 Packs leave out unnamed service roads (parking-lot lanes, apartment drives, alleys): they were
 45% of Dallas's edges but almost never part of a sensible route. `build_pack --with-service`
 keeps them, for comparison.
+
+## Search
+
+Search runs on the phone, like routing, so nothing typed leaves it. `pipeline/places.py` builds
+each area's index from OpenStreetMap: streets (a street's pieces grouped into one entry per town,
+with a point about every kilometre so a result can be shown where it's nearest), house numbers
+filed under their street, and named places (shops, schools, parks, stations, airports,
+neighbourhoods; `kind_of` decides what counts). House numbers are written every which way in the
+data, so they're matched to roads on a key that spells abbreviations one way ("E Belt Line Rd" is
+"East Belt Line Road"), then without the direction or the type. The file (FWP1) is laid out like a
+road pack; Dallas's is 1.4 MB gzipped for 240,000 addresses.
+
+`packages/router/src/places.ts` decodes it and searches: words in any order, each a whole word or
+the start of one, with abbreviations read either way; a leading number looks for that house
+number, placed between its neighbours (and marked approximate) when the map doesn't have it.
+Results rank by how well they match, how notable the place is and how near. The app runs it in its
+own worker (`apps/web/src/search-worker.ts`); `src/search.ts` turns the From and To fields into
+search boxes. The search index is built by the monthly (full) build only; the nightly update
+keeps the live one.
+
+`python -m pipeline.places <extract> <out.fwp>` builds one from any extract; the pipeline tests use
+a made-up town (`pipeline/fixtures.py`, `town_osm`) and the router's tests search its index
+(`packages/router/test/fixtures/town.fwp`).

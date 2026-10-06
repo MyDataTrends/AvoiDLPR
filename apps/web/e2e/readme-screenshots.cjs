@@ -1,5 +1,5 @@
-// Takes the screenshots in the README (docs/images/) from the dev server on :5173, using the
-// example trip. With the playwright skill, from the repository root:
+// Takes the screenshots in the README (docs/images/) from the dev server on :5173, using a search
+// and the example trip. With the playwright skill, from the repository root:
 //   node ~/.claude/skills/playwright-skill/run.js apps/web/e2e/readme-screenshots.cjs
 const path = require('node:path');
 const { chromium, devices } = require('playwright');
@@ -10,7 +10,8 @@ const DALLAS_DOWNTOWN = { latitude: 32.7767, longitude: -96.797, accuracy: 25 };
 
 async function ready(page) {
   await page.getByText('network loaded').waitFor({ timeout: 90_000 });
-  await page.waitForFunction(() => window.__fw?.map.loaded(), null, { timeout: 90_000 });
+  // The search index too: tapped stops are named after it.
+  await page.waitForFunction(() => window.__fw?.map.loaded() && window.__fw.search.ready, null, { timeout: 90_000 });
 }
 const settled = (page) => page.waitForFunction(() => !window.__fw.map.isMoving() && window.__fw.map.areTilesLoaded(), null, { timeout: 30_000 });
 
@@ -32,6 +33,15 @@ async function shot(page, name) {
     const page = await phone.newPage();
     await page.goto(URL);
     await ready(page);
+
+    // Searching for a destination, from where you are.
+    await page.locator('#mapLocate').tap();
+    await page.waitForFunction(() => document.getElementById('fromInput').value.startsWith('Your location'));
+    await page.locator('#toInput').tap();
+    await page.locator('#toInput').fill('fair park');
+    await page.locator('#suggestions .suggest-name', { hasText: 'Music Hall' }).waitFor();
+    await shot(page, 'phone-search.jpg');
+    await page.keyboard.press('Escape');
 
     // Route options for the example trip, with the fewest-cameras option selected.
     await page.getByRole('button', { name: 'Try an example trip' }).tap();

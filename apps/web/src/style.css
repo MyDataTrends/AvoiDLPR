@@ -189,21 +189,125 @@ select {
   gap: 8px;
 }
 
+/* A stop is a search field: its label wraps the input, so a tap anywhere on it starts typing. */
 .stop-main {
   display: grid;
   grid-template-columns: auto 34px 1fr;
   gap: 10px;
   align-items: center;
   min-height: var(--tap);
-  border-color: var(--line);
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
   background: #fff;
   color: var(--ink);
-  text-align: left;
+  cursor: text;
 }
 
-.stop-main[aria-pressed="true"] {
+/* The stop the next map tap sets. */
+.stop-main[data-target="true"] {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
+}
+
+.stop-main:focus-within {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.stop-input {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+  text-overflow: ellipsis;
+}
+
+.stop-input::placeholder {
+  color: var(--muted);
+}
+
+.stop-input::-webkit-search-decoration {
+  appearance: none;
+}
+
+/* ---------- search results, under the stops ---------- */
+
+.suggestions {
+  margin: 0;
+  padding: 4px 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.08);
+  list-style: none;
+}
+
+.suggestion {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: 12px;
+  align-items: center;
+  min-height: var(--tap);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.suggestion[aria-selected="true"],
+.suggestion:hover {
+  background: #edf2fe;
+}
+
+.suggestion svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: var(--muted);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.suggest-text {
+  display: grid;
+  min-width: 0;
+}
+
+.suggest-name,
+.suggest-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggest-name {
+  font-size: 14px;
+}
+
+.suggest-detail {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.suggest-map:not(:first-child) {
+  border-top: 1px solid var(--line);
+}
+
+.suggest-map .suggest-name {
+  color: var(--accent);
+}
+
+.suggest-note {
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .dot {
@@ -224,13 +328,6 @@ select {
 .stop-label {
   color: var(--muted);
   font-size: 12px;
-}
-
-.stop-text {
-  overflow: hidden;
-  font-size: 14px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .icon-btn,
@@ -597,7 +694,8 @@ footer {
   }
 
   /* 16px keeps iOS from zooming the page when a field takes focus. */
-  select {
+  select,
+  .stop-input {
     font-size: 16px;
   }
 

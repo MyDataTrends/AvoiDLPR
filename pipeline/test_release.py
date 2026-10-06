@@ -231,12 +231,15 @@ def test_build_region_downloads_clips_and_builds(tmp_path):
     calls: list[list[str]] = []
     pack = build_region.build_region(DALLAS, tmp_path / "work", tmp_path / "data",
                                      run=_fake_runner(_grid_pbf(tmp_path), calls))
-    assert [c[:2] for c in calls] == [["curl", "-fL"], ["osmium", "tags-filter"], ["osmium", "extract"]]
+    # roads and places filtered from the download; each cut out (the grid has no places: no index)
+    assert [c[:2] for c in calls] == [["curl", "-fL"], ["osmium", "tags-filter"], ["osmium", "tags-filter"],
+                                      ["osmium", "extract"], ["osmium", "extract"]]
+    assert "nw/addr:housenumber" in calls[2] and "smart" in calls[4]
     assert calls[0][-1] == "https://download.geofabrik.de/north-america/us/texas-latest.osm.pbf"
     assert ("w/highway=motorway,motorway_link,trunk,trunk_link,primary,primary_link,secondary,secondary_link,"
             "tertiary,tertiary_link,unclassified,residential,living_street,service") in calls[1]
-    assert "r/type=restriction" in calls[1] and "complete_ways" in calls[2]
-    assert calls[2][2:4] == ["-b", "-97.05,32.63,-96.53,32.94"]
+    assert "r/type=restriction" in calls[1] and "complete_ways" in calls[3]
+    assert calls[3][2:4] == calls[4][2:4] == ["-b", "-97.05,32.63,-96.53,32.94"]
     assert pack == tmp_path / "data" / "packs" / "dallas.fwr" and read_header(pack)["counts"]["edges"] == 78
     assert not (tmp_path / "work" / "src" / "north-america_us_texas.osm.pbf").exists()  # raw download freed
 
@@ -272,7 +275,9 @@ def test_a_batch_downloads_each_state_once_merges_and_survives_a_bad_region(tmp_
     assert downloads == ["https://download.geofabrik.de/north-america/us/north-carolina-latest.osm.pbf",
                          "https://download.geofabrik.de/north-america/us/south-carolina-latest.osm.pbf"]
     # each state filtered once, merged once, then one cut per region
-    assert [c[1] for c in calls if c[0] == "osmium"] == ["tags-filter", "tags-filter", "merge", "extract", "extract", "extract"]
+    # each state filtered once (roads, then places), merged once, then cut per region (roads, then
+    # places; the region that failed gets no search index)
+    assert [c[1] for c in calls if c[0] == "osmium"] == ["tags-filter"] * 4 + ["merge"] * 2 + ["extract"] * 5
     assert [(r["id"], r["ok"]) for r in report] == [("a", True), ("b", True), ("big", False)]
     assert "too big for a phone" in report[2]["error"] and not (tmp_path / "data" / "packs" / "big.fwr").exists()
     assert report[0]["edges"] == 78 and report[0]["pack_bytes"] > 0
@@ -334,16 +339,19 @@ def test_report_puts_failures_first_and_totals_the_bucket(tmp_path):
         {"id": "a", "name": "A", "batch": "x", "ok": True, "edges": 900_000, "pack_bytes": 30e6,
          "basemap_bytes": 80e6, "seconds": 61.0, "warning": "900,000 road edges is on the heavy side"},
         {"id": "b", "name": "B", "batch": "x", "ok": False, "error": "RuntimeError: boom", "seconds": 1.0},
+        {"id": "c", "name": "C", "batch": "x", "ok": True, "edges": 10, "places_error": "ValueError: no streets"},
     ]}]
     (tmp_path / "cameras").mkdir()
     (tmp_path / "cameras" / "a.json").write_text(json.dumps({"cameras": [{}, {}, {}]}))
     entry = _entry("a") | {"name": "A", "pack": {"path": "p", "bytes": 18e6, "edges": 900_000},
-                           "basemap": {"path": "q", "bytes": 80e6, "maxzoom": 15}}
+                           "basemap": {"path": "q", "bytes": 80e6, "maxzoom": 15}, "places": {"path": "s", "bytes": 4e6}}
     md = render(reports, {"regions": [entry]}, tmp_path)
-    assert "1 of 2 regions built" in md and "0.10 GB" in md and "**b** (x): RuntimeError: boom" in md
+    assert "2 of 3 regions built" in md and "0.10 GB" in md and "**b** (x): RuntimeError: boom" in md
+    assert "(1 with search)" in md and "0.004 GB search" not in md and "0.00 GB search indexes" in md
+    assert "**c**: ValueError: no streets" in md
     table = md[md.index("| Region"):].splitlines()
     assert table[2].startswith("| B ❌") and table[3].startswith("| A |")
-    assert "| 3 |" in table[3] and "(z15)" in table[3]
+    assert "| 3 |" in table[3] and "(z15)" in table[3] and "| 4.0 |" in table[3]
 
 
 def test_check_regions_finds_states_a_region_reaches_into():

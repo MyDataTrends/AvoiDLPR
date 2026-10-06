@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="flockwatch-fixtures">
+  <node id="1000" version="1" lat="32.78" lon="-96.8042786"></node>
+  <node id="1001" version="1" lat="32.78" lon="-96.8021393"></node>
+  <node id="1002" version="1" lat="32.78" lon="-96.8"></node>
+  <node id="1003" version="1" lat="32.78" lon="-96.8"></node>
+  <node id="1004" version="1" lat="32.78" lon="-96.7978607"></node>
+  <node id="1005" version="1" lat="32.78" lon="-96.7957214"></node>
+  <node id="1006" version="1" lat="32.7764027" lon="-96.8042786"></node>
+  <node id="1007" version="1" lat="32.7764027" lon="-96.7957214"></node>
+  <node id="1008" version="1" lat="32.7764027" lon="-96.8"></node>
+  <node id="1009" version="1" lat="32.78" lon="-96.8"></node>
+  <node id="1010" version="1" lat="32.7835973" lon="-96.8"></node>
+  <node id="1011" version="1" lat="32.7835973" lon="-96.8042786"></node>
+  <node id="1012" version="1" lat="32.7835973" lon="-96.7957214"></node>
+  <node id="1013" version="1" lat="32.78" lon="-96.7465171"></node>
+  <node id="1014" version="1" lat="32.78" lon="-96.7443778"></node>
+  <node id="1015" version="1" lat="32.78" lon="-96.7422385"></node>
+  <node id="1016" version="1" lat="32.7782014" lon="-96.8021393"></node>
+  <node id="1017" version="1" lat="32.7782014" lon="-96.7978607"></node>
+  <node id="1018" version="1" lat="32.78" lon="-96.8"><tag k="place" v="town"/><tag k="name" v="Gridville"/></node>
+  <node id="1019" version="1" lat="32.7805396" lon="-96.7443778"><tag k="place" v="town"/><tag k="name" v="Eastville"/></node>
+  <node id="1020" version="1" lat="32.7764027" lon="-96.7443778"><tag k="place" v="village"/><tag k="name" v="Smallville"/></node>
+  <node id="1021" version="1" lat="32.7835973" lon="-96.8042786"><tag k="place" v="neighbourhood"/><tag k="name" v="Old Town"/></node>
+  <node id="1022" version="1" lat="32.7798201" lon="-96.803209"><tag k="addr:housenumber" v="100"/><tag k="addr:street" v="Main Street"/><tag k="addr:city" v="GRIDVILLE"/></node>
+  <node id="1023" version="1" lat="32.7798201" lon="-96.8021393"><tag k="addr:housenumber" v="102"/><tag k="addr:street" v="Main Street"/><tag k="addr:city" v="GRIDVILLE"/></node>
+  <node id="1024" version="1" lat="32.7798201" lon="-96.8010697"><tag k="addr:housenumber" v="104"/><tag k="addr:street" v="Main Street"/><tag k="addr:city" v="GRIDVILLE"/></node>
+  <node id="1025" version="1" lat="32.7798201" lon="-96.7989303"><tag k="addr:housenumber" v="106"/><tag k="addr:street" v="Main Street"/><tag k="addr:city" v="GRIDVILLE"/></node>
+  <node id="1026" version="1" lat="32.7798201" lon="-96.796791"><tag k="addr:housenumber" v="110"/><tag k="addr:street" v="Main Street"/><tag k="addr:city" v="GRIDVILLE"/></node>
+  <node id="1027" version="1" lat="32.7798561" lon="-96.8010697"><tag k="addr:housenumber" v="104B"/><tag k="addr:street" v="Main Street"/></node>
+  <node id="1028" version="1" lat="32.7797482" lon="-96.8022249"></node>
+  <node id="1029" version="1" lat="32.7797482" lon="-96.8020537"></node>
+  <node id="1030" version="1" lat="32.7798921" lon="-96.8020537"></node>
+  <node id="1031" version="1" lat="32.7798921" lon="-96.8022249"></node>
+  <node id="1032" version="1" lat="32.7797482" lon="-96.8022249"></node>
+  <node id="1033" version="1" lat="32.7798201" lon="-96.7443778"><tag k="addr:housenumber" v="100"/><tag k="addr:street" v="Main Street"/></node>
+  <node id="1034" version="1" lat="32.7782014" lon="-96.7997861"><tag k="addr:housenumber" v="5"/><tag k="addr:street" v="N Oak Ave"/></node>
+  <node id="1035" version="1" lat="32.7817986" lon="-96.7997861"><tag k="addr:housenumber" v="7"/><tag k="addr:street" v="N. Oak Ave."/></node>
+  <node id="1036" version="1" lat="32.782698" lon="-96.7997861"><tag k="addr:housenumber" v="9"/><tag k="addr:street" v="Oak Avenue"/></node>
+  <node id="1037" version="1" lat="32.7765826" lon="-96.8021393"><tag k="addr:housenumber" v="1"/><tag k="addr:street" v="ELM"/></node>
+  <node id="1038" version="1" lat="32.7837771" lon="-96.8021393"><tag k="addr:housenumber" v="20;22"/><tag k="addr:street" v="Mill Road"/></node>
+  <node id="1039" version="1" lat="32.782698" lon="-96.796791"><tag k="addr:housenumber" v="1"/><tag k="addr:street" v="Hidden Lane"/></node>
+  <node id="1040" version="1" lat="32.782698" lon="-96.7963632"><tag k="addr:housenumber" v="3"/><tag k="addr:street" v="Hidden Lane"/></node>
+  <node id="1041" version="1" lat="32.7828778" lon="-96.7965771"><tag k="addr:housenumber" v="12"/><tag k="addr:street" v="12 Fake Street, Gridville"/></node>
+  <node id="1042" version="1" lat="32.7801799" lon="-96.8017115"><tag k="amenity" v="cafe"/><tag k="name" v="Bean There"/><tag k="addr:city" v="GRIDVILLE"/></node>
+  <node id="1043" version="1" lat="32.7801799" lon="-96.74395"><tag k="amenity" v="restaurant"/><tag k="name" v="Bean There"/></node>
+  <node id="1044" version="1" lat="32.7801799" lon="-96.7974328"><tag k="amenity" v="fuel"/><tag k="brand" v="Shell"/></node>
+  <node id="1045" version="1" lat="32.7801799" lon="-96.7987164"><tag k="shop" v="supermarket"/><tag k="name" v="Grid Grocer"/></node>
+  <node id="1046" version="1" lat="32.7800899" lon="-96.7988234"></node>
+  <node id="1047" version="1" lat="32.7800899" lon="-96.7986094"></node>
+  <node id="1048" version="1" lat="32.7802698" lon="-96.7986094"></node>
+  <node id="1049" version="1" lat="32.7802698" lon="-96.7988234"></node>
+  <node id="1050" version="1" lat="32.7800899" lon="-96.7988234"></node>
+  <node id="1051" version="1" lat="32.7803597" lon="-96.797005"><tag k="shop" v="convenience"/><tag k="name" v="QT"/><tag k="brand" v="QuikTrip"/></node>
+  <node id="1052" version="1" lat="32.7803597" lon="-96.8025672"><tag k="amenity" v="bench"/><tag k="name" v="Memorial Bench"/></node>
+  <node id="1053" version="1" lat="32.7815288" lon="-96.8035299"></node>
+  <node id="1054" version="1" lat="32.7815288" lon="-96.8028881"></node>
+  <node id="1055" version="1" lat="32.7820684" lon="-96.8028881"></node>
+  <node id="1056" version="1" lat="32.7820684" lon="-96.8035299"></node>
+  <node id="1057" version="1" lat="32.7815288" lon="-96.8035299"></node>
+  <node id="1058" version="1" lat="32.7844966" lon="-96.8042786"></node>
+  <node id="1059" version="1" lat="32.7844966" lon="-96.7957214"></node>
+  <node id="1060" version="1" lat="32.7758631" lon="-96.7974328"></node>
+  <node id="1061" version="1" lat="32.7758631" lon="-96.7961492"></node>
+  <node id="1062" version="1" lat="32.7769423" lon="-96.7961492"></node>
+  <node id="1063" version="1" lat="32.7769423" lon="-96.7974328"></node>
+  <node id="1064" version="1" lat="32.7758631" lon="-96.7974328"></node>
+  <way id="1" version="1"><nd ref="1000"/><nd ref="1001"/><nd ref="1002"/><tag k="highway" v="primary"/><tag k="name" v="Main Street"/></way>
+  <way id="2" version="1"><nd ref="1003"/><nd ref="1004"/><nd ref="1005"/><tag k="highway" v="primary"/><tag k="name" v="Main Street"/></way>
+  <way id="3" version="1"><nd ref="1006"/><nd ref="1007"/><tag k="highway" v="residential"/><tag k="name" v="Elm Street"/></way>
+  <way id="4" version="1"><nd ref="1008"/><nd ref="1009"/><nd ref="1010"/><tag k="highway" v="residential"/><tag k="name" v="North Oak Avenue"/></way>
+  <way id="5" version="1"><nd ref="1011"/><nd ref="1012"/><tag k="highway" v="residential"/><tag k="name" v="Mill Road"/></way>
+  <way id="6" version="1"><nd ref="1013"/><nd ref="1014"/><nd ref="1015"/><tag k="highway" v="primary"/><tag k="name" v="Main Street"/></way>
+  <way id="7" version="1"><nd ref="1016"/><nd ref="1017"/><tag k="highway" v="footway"/><tag k="name" v="Grid Trail"/></way>
+  <way id="20" version="1"><nd ref="1028"/><nd ref="1029"/><nd ref="1030"/><nd ref="1031"/><nd ref="1032"/><tag k="building" v="house"/><tag k="addr:housenumber" v="102"/><tag k="addr:street" v="Main Street"/></way>
+  <way id="21" version="1"><nd ref="1046"/><nd ref="1047"/><nd ref="1048"/><nd ref="1049"/><nd ref="1050"/><tag k="building" v="retail"/><tag k="shop" v="supermarket"/><tag k="name" v="Grid Grocer"/></way>
+  <way id="22" version="1"><nd ref="1053"/><nd ref="1054"/><nd ref="1055"/><nd ref="1056"/><nd ref="1057"/><tag k="natural" v="water"/><tag k="name" v="Mirror Lake"/></way>
+  <way id="23" version="1"><nd ref="1058"/><nd ref="1059"/><tag k="waterway" v="river"/><tag k="name" v="Grid River"/></way>
+  <way id="24" version="1"><nd ref="1060"/><nd ref="1061"/><nd ref="1062"/><nd ref="1063"/><nd ref="1064"/></way>
+  <relation id="30" version="1"><member type="way" ref="24" role="outer"/><tag k="type" v="multipolygon"/><tag k="aeroway" v="aerodrome"/><tag k="name" v="Gridville Regional Airport"/><tag k="iata" v="GRV"/></relation>
+</osm>

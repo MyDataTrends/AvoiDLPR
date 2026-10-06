@@ -4,8 +4,8 @@
 // What is cached, and why:
 //   app shell      precached per build, cache-first: the app opens instantly and offline.
 //   road packs     cache-first once fetched: a few MB each, content-hashed so a name never
-//                  changes meaning. When the page says a new one loaded ("pack-ok": it matched
-//                  its checksum and decoded), older versions of that area are dropped, and only
+//   and search     changes meaning. When the page says a new one loaded ("pack-ok": it matched
+//   indexes        its checksum and decoded), older versions of that area are dropped, and only
 //                  the last few areas are kept. Until then the old one stays, as the fallback.
 //   fonts/sprites  cache-first: immutable.
 //   regions.json   network-first with a cached fallback: it says which pack is current.
@@ -41,17 +41,18 @@ self.addEventListener("message", (event) => {
   if (event.data === "skipWaiting") self.skipWaiting();
   if (event.data?.type === "pack-ok" && typeof event.data.url === "string") {
     const url = new URL(event.data.url);
-    if (isPack(url)) event.waitUntil(caches.open(DATA_CACHE).then((cache) => dropOtherVersions(cache, url)));
+    if (isAreaFile(url)) event.waitUntil(caches.open(DATA_CACHE).then((cache) => dropOtherVersions(cache, url)));
   }
-  // A pack that failed its checksum or didn't decode: drop the copy, so the next try downloads it.
+  // A file that failed its checksum or didn't decode: drop the copy, so the next try downloads it.
   if (event.data?.type === "pack-bad" && typeof event.data.url === "string") {
     const url = new URL(event.data.url);
-    if (isPack(url)) event.waitUntil(caches.open(DATA_CACHE).then((cache) => cache.delete(url.href, { ignoreVary: true })));
+    if (isAreaFile(url)) event.waitUntil(caches.open(DATA_CACHE).then((cache) => cache.delete(url.href, { ignoreVary: true })));
   }
 });
 
-const isPack = (url) => /\/packs\/[^/]+\.fwr(\.gz)?$/.test(url.pathname);
-/** How many areas' road packs to keep for offline use. */
+/** An area's road pack (packs/<area>.<hash>.fwr.gz) or search index (places/<area>.<hash>.fwp.gz). */
+const isAreaFile = (url) => /\/(packs\/[^/]+\.fwr|places\/[^/]+\.fwp)(\.gz)?$/.test(url.pathname);
+/** How many areas' road packs and search indexes to keep for offline use. */
 const MAX_PACKS = 4;
 const isStaticAsset = (url) => /\/basemap\/assets\//.test(url.pathname);
 const isMutableData = (url) => /\/(cameras\/[^/]+\.json|regions\.json)$/.test(url.pathname);
@@ -74,7 +75,7 @@ self.addEventListener("fetch", (event) => {
     }
   }
 
-  if (isPack(url) || isStaticAsset(url)) {
+  if (isAreaFile(url) || isStaticAsset(url)) {
     event.respondWith(cacheFirst(event, request));
   } else if (isMutableData(url)) {
     event.respondWith(networkFirst(event, request));
@@ -91,15 +92,19 @@ async function cacheFirst(event, request) {
 }
 
 /**
- * Keep one pack per area (the content-hashed name is <area>.<hash>.fwr.gz), and only the
- * MAX_PACKS areas cached most recently: the cache lists keys oldest first.
+ * Keep one file of each kind per area (packs/<area>.<hash>.fwr.gz, places/<area>.<hash>.fwp.gz),
+ * and only the MAX_PACKS areas cached most recently: the cache lists keys oldest first.
  */
-async function dropOtherVersions(cache, packUrl) {
+async function dropOtherVersions(cache, fileUrl) {
   const area = (u) => u.pathname.split("/").pop().split(".")[0];
-  const packs = (await cache.keys()).filter((key) => isPack(new URL(key.url)));
-  const others = packs.filter((key) => new URL(key.url).pathname !== packUrl.pathname);
-  for (const key of others.filter((k) => area(new URL(k.url)) === area(packUrl))) await cache.delete(key);
-  const rest = others.filter((k) => area(new URL(k.url)) !== area(packUrl));
+  const kind = (u) => u.pathname.split("/").slice(-2, -1)[0];
+  const files = (await cache.keys()).filter((key) => {
+    const u = new URL(key.url);
+    return isAreaFile(u) && kind(u) === kind(fileUrl);
+  });
+  const others = files.filter((key) => new URL(key.url).pathname !== fileUrl.pathname);
+  for (const key of others.filter((k) => area(new URL(k.url)) === area(fileUrl))) await cache.delete(key);
+  const rest = others.filter((k) => area(new URL(k.url)) !== area(fileUrl));
   for (const key of rest.slice(0, Math.max(0, rest.length - (MAX_PACKS - 1)))) await cache.delete(key);
 }
 

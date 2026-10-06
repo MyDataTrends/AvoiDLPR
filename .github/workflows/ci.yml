@@ -56,6 +56,6 @@ jobs:
         run: |
           test -f apps/web/dist/sw.js
           test -f apps/web/dist/_headers
-          found="$(find apps/web/dist \( -name '*.fwr' -o -name '*.pmtiles' -o -name '*.key' -o -name '*.pem' \))"
+          found="$(find apps/web/dist \( -name '*.fwr*' -o -name '*.fwp*' -o -name '*.pmtiles' -o -name '*.key' -o -name '*.pem' \))"
           if [ -n "$found" ]; then echo "::error::map data or keys in the build:"; echo "$found"; exit 1; fi
           du -sh apps/web/dist

@@ -41,27 +41,34 @@
           </p>
         </header>
 
-        <section class="trip" aria-label="Trip">
+        <section id="trip" class="trip" aria-label="Trip">
+          <!-- Each stop is a search box too. Search runs on this device (src/search.ts): what's
+               typed never leaves the page. -->
           <div class="stop">
-            <button id="targetFrom" type="button" class="stop-main" aria-pressed="true">
+            <label id="targetFrom" class="stop-main" data-target="true">
               <span class="dot from" aria-hidden="true"></span>
               <span class="stop-label">From</span>
-              <span id="fromText" class="stop-text"></span>
-            </button>
+              <input id="fromInput" class="stop-input" type="search" enterkeyhint="search" autocomplete="off"
+                autocapitalize="off" spellcheck="false" role="combobox" aria-autocomplete="list"
+                aria-controls="suggestions" aria-expanded="false" aria-label="From: search for a start" />
+            </label>
             <button id="locate" type="button" class="icon-btn" aria-label="Use my current location">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="7.5" fill="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
             </button>
           </div>
           <div class="stop">
-            <button id="targetTo" type="button" class="stop-main" aria-pressed="false">
+            <label id="targetTo" class="stop-main" data-target="false">
               <span class="dot to" aria-hidden="true"></span>
               <span class="stop-label">To</span>
-              <span id="toText" class="stop-text"></span>
-            </button>
+              <input id="toInput" class="stop-input" type="search" enterkeyhint="search" autocomplete="off"
+                autocapitalize="off" spellcheck="false" role="combobox" aria-autocomplete="list"
+                aria-controls="suggestions" aria-expanded="false" aria-label="To: search for a destination" />
+            </label>
             <button id="swap" type="button" class="icon-btn" aria-label="Swap start and destination">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v14M8 18l-3-3M8 18l3-3M16 20V6M16 6l-3 3M16 6l3 3"/></svg>
             </button>
           </div>
+          <ul id="suggestions" class="suggestions" role="listbox" aria-label="Places found" hidden></ul>
           <div class="row">
             <button id="example" type="button" class="quiet">Try an example trip</button>
             <button id="clear" type="button" class="quiet">Clear</button>
