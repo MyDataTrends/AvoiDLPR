@@ -86,6 +86,12 @@ Repository **Settings > Secrets and variables > Actions**:
 | Secret | `R2_SECRET_ACCESS_KEY` | from the API token |
 | Variable | `R2_BUCKET` | the bucket name |
 
+The three secrets go under the **Secrets** tab and the bucket name under **Variables**, with
+exactly these names. Both data workflows check them first: if one is missing, the run fails at
+"Check the bucket is set up and reachable" and names it; if they're all there but the bucket
+can't be listed, it says that instead (usually the account ID, or a token scoped to another
+bucket).
+
 ### 4. Publish the data
 
 **Actions > Build map data > Run workflow** (leave "publish" ticked). It builds all 135 areas in
@@ -248,7 +254,8 @@ fresh downloads, new basemaps, and a correction for anything the nightly updates
 
 ## Known gaps
 
-- The data workflows have been dry-run on GitHub but have never published to a bucket.
+- The data workflows have been dry-run on GitHub (the monthly build, and the nightly update both
+  from a fresh download and rolling cached roads forward) but have never published to a bucket.
 - Areas are separate maps: a trip from one to another (Charlotte to Raleigh) can't be planned
   unless one area holds both ends. Neighbouring areas overlap so most trips inside a metro work;
   routing across the country would need the road network in tiles, loaded along the way.
