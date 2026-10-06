@@ -1,10 +1,11 @@
-// FlockWatch service worker. The build (vite.config.ts) fills in VERSION and SHELL; this file is
+// AvoiDLPR service worker. The build (vite.config.ts) fills in VERSION and SHELL; this file is
 // served as /sw.js and is never bundled.
 //
 // What is cached, and why:
 //   app shell      precached per build, cache-first: the app opens instantly and offline.
-//   road packs     cache-first once fetched: 19 MB, content-hashed so a name never changes
-//                  meaning. Older versions of the same region are dropped.
+//   road packs     cache-first once fetched: a few MB each, content-hashed so a name never
+//                  changes meaning. Older versions of the same area are dropped, and only the
+//                  last few areas opened are kept.
 //   fonts/sprites  cache-first: immutable.
 //   regions.json   network-first with a cached fallback: it says which pack is current.
 //   camera feeds   network-first with a cached fallback: they change hourly.
@@ -39,7 +40,9 @@ self.addEventListener("message", (event) => {
   if (event.data === "skipWaiting") self.skipWaiting();
 });
 
-const isPack = (url) => /\/packs\/[^/]+\.fwr$/.test(url.pathname);
+const isPack = (url) => /\/packs\/[^/]+\.fwr(\.gz)?$/.test(url.pathname);
+/** How many areas' road packs to keep for offline use. */
+const MAX_PACKS = 4;
 const isStaticAsset = (url) => /\/basemap\/assets\//.test(url.pathname);
 const isMutableData = (url) => /\/(cameras\/[^/]+\.json|regions\.json)$/.test(url.pathname);
 
@@ -82,15 +85,17 @@ async function cacheFirst(event, request, packUrl) {
   return response;
 }
 
-/** Keep one pack per region: the content-hashed name is <region>.<hash>.fwr. */
+/**
+ * Keep one pack per area (the content-hashed name is <area>.<hash>.fwr.gz), and only the
+ * MAX_PACKS areas cached most recently: the cache lists keys oldest first.
+ */
 async function dropOtherVersions(cache, packUrl) {
-  const region = packUrl.pathname.split("/").pop().split(".")[0];
-  for (const key of await cache.keys()) {
-    const u = new URL(key.url);
-    if (isPack(u) && u.pathname !== packUrl.pathname && u.pathname.split("/").pop().split(".")[0] === region) {
-      await cache.delete(key);
-    }
-  }
+  const area = (u) => u.pathname.split("/").pop().split(".")[0];
+  const packs = (await cache.keys()).filter((key) => isPack(new URL(key.url)));
+  const others = packs.filter((key) => new URL(key.url).pathname !== packUrl.pathname);
+  for (const key of others.filter((k) => area(new URL(k.url)) === area(packUrl))) await cache.delete(key);
+  const rest = others.filter((k) => area(new URL(k.url)) !== area(packUrl));
+  for (const key of rest.slice(0, Math.max(0, rest.length - (MAX_PACKS - 1)))) await cache.delete(key);
 }
 
 async function networkFirst(event, request) {

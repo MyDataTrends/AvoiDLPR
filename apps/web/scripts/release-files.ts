@@ -17,12 +17,15 @@ const TYPES: Record<string, string> = {
   ".pbf": "application/x-protobuf",
   ".png": "image/png",
   ".fwr": "application/octet-stream",
+  // A gzipped pack is a file the app unzips itself: no Content-Encoding, so nothing in between
+  // decodes it on the way.
+  ".gz": "application/gzip",
   ".pmtiles": "application/octet-stream",
 };
 
 /** Content-hashed files (<region>.<10 hex>.<ext>) and fonts/sprites never change; the rest does. */
 function cacheControl(rel: string): string {
-  if (/^(packs|basemap)\/[^/]+\.[0-9a-f]{10}\.(fwr|pmtiles)$/.test(rel) || rel.startsWith("basemap/assets/")) {
+  if (/^(packs|basemap)\/[^/]+\.[0-9a-f]{10}\.(fwr|fwr\.gz|pmtiles)$/.test(rel) || rel.startsWith("basemap/assets/")) {
     return "public, max-age=31536000, immutable";
   }
   return "public, max-age=0, must-revalidate";

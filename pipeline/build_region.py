@@ -1,66 +1,36 @@
-"""Build a region's road pack from OpenStreetMap: download, clip, build.
+"""Build one region's road pack (and, with --basemap, its basemap) from OpenStreetMap.
 
-Usage: python -m pipeline.build_region <region> [--work work] [--data data]
-       python -m pipeline.build_region dallas --pbf some.osm.pbf --no-clip   # a local extract
+Usage: python -m pipeline.build_region <region> [--work work] [--data data] [--basemap]
+       python -m pipeline.build_region dallas --pbf some.osm.pbf   # an extract you already have
 
-1. Download the region's Geofabrik state extract (unless --pbf names a local file).
-2. Clip it to the region's rectangle with `osmium extract` (osmium-tool, `apt install osmium-tool`),
-   keeping ways whole where they cross the edge, so no road is cut in half.
-3. Build the pack with the same code as `pipeline.build_pack` -> data/packs/<region>.fwr.
-
-Then fetch the basemap (`npm run fetch-basemap -w @flockwatch/web -- --region <id>`), refresh the
-cameras and stage the release; docs/DEPLOY.md and .github/workflows/build-data.yml run exactly this.
+The same steps as one region of `pipeline.build_batch`: download the region's state extracts, keep
+the roads, merge them, cut the region out (osmium-tool, `apt install osmium-tool`) and build the
+pack into data/packs/<region>.fwr. With --pbf the file is used as it is: no download, no clipping
+and no osmium. Then fetch the basemap (if you didn't pass --basemap), refresh the cameras and
+stage the release; docs/DEVELOPING.md has the commands.
 """
 
 from __future__ import annotations
 
 import argparse
-import shutil
-import subprocess
 import sys
-from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from . import build_pack
+from .build_batch import Run, build_batch, run_checked
 from .regions import Region, get_region
 
-Run = Callable[[Sequence[str]], None]
 
-
-def run_checked(cmd: Sequence[str]) -> None:
-    print("+", " ".join(str(c) for c in cmd), flush=True)
-    subprocess.run([str(c) for c in cmd], check=True)
-
-
-def download_command(region: Region, target: Path) -> list[str]:
-    return ["curl", "-fL", "--retry", "3", "--retry-delay", "5", "-o", str(target), region.geofabrik_url]
-
-
-def clip_command(region: Region, source: Path, target: Path) -> list[str]:
-    w, s, e, n = region.clip_bbox
-    return ["osmium", "extract", "-b", f"{w},{s},{e},{n}", "--strategy", "complete_ways",
-            "--overwrite", "-o", str(target), str(source)]
-
-
-def build_region(region: Region, work: Path, data: Path, *, pbf: Path | None = None, clip: bool = True,
+def build_region(region: Region, work: Path, data: Path, *, pbf: Path | None = None, basemap: bool = False,
                  run: Run = run_checked) -> Path:
     """Returns the pack's path."""
-    work.mkdir(parents=True, exist_ok=True)
-    if pbf is None:
-        source = work / f"{region.geofabrik.replace('/', '_')}.osm.pbf"
-        if not source.exists():
-            run(download_command(region, source))
-    else:
-        source = pbf
-    if clip:
-        if shutil.which("osmium") is None and run is run_checked:
-            raise RuntimeError("osmium-tool isn't installed (apt install osmium-tool), or pass --no-clip for an already-clipped extract")
-        clipped = work / f"{region.id}.osm.pbf"
-        run(clip_command(region, source, clipped))
-    else:
-        clipped = source
     pack = data / "packs" / f"{region.id}.fwr"
-    build_pack.main([str(clipped), str(pack)])
+    if pbf is not None:
+        build_pack.main([str(pbf), str(pack)])
+        return pack
+    row = build_batch([region], work, data, run=run, basemaps=basemap)[0]
+    if not row["ok"]:
+        raise RuntimeError(f"{region.id}: {row['error']}")
     return pack
 
 
@@ -69,10 +39,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("region", help="a region id from pipeline/regions.json")
     ap.add_argument("--work", type=Path, default=Path("work"), help="scratch directory for downloads")
     ap.add_argument("--data", type=Path, default=Path("data"))
-    ap.add_argument("--pbf", type=Path, help="use this OSM extract instead of downloading one")
-    ap.add_argument("--no-clip", action="store_true", help="the extract is already the right size")
+    ap.add_argument("--pbf", type=Path, help="use this OSM extract as it is instead of downloading one")
+    ap.add_argument("--basemap", action="store_true", help="also fetch the region's basemap")
     args = ap.parse_args(argv)
-    pack = build_region(get_region(args.region), args.work, args.data, pbf=args.pbf, clip=not args.no_clip)
+    pack = build_region(get_region(args.region), args.work, args.data, pbf=args.pbf, basemap=args.basemap)
     print(f"built {pack}")
     return 0
 

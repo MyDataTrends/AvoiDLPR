@@ -20,12 +20,21 @@
     <aside id="panel" data-state="half" aria-label="Trip planner">
       <div id="sheetHead" class="sheet-head">
         <button id="handle" class="handle" type="button" aria-label="Resize panel" aria-expanded="true"><span></span></button>
-        <p id="summary" class="summary"></p>
+        <div class="head-row">
+          <p id="summary" class="summary"></p>
+          <button id="headNav" type="button" class="start head-start" aria-pressed="false" hidden>Start</button>
+        </div>
       </div>
 
       <div class="sheet-body">
         <header>
-          <h1>AvoiDLPR</h1>
+          <div class="title-row">
+            <h1>AvoiDLPR</h1>
+            <button id="regionBtn" type="button" class="region-btn" aria-haspopup="dialog" hidden>
+              <span id="regionName"></span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+          </div>
           <p id="lede" class="lede">
             Routes around license-plate cameras. Everything is computed in this tab: your start and
             destination never leave it.
@@ -60,12 +69,14 @@
         </section>
 
         <p id="notice" class="notice" role="status" hidden></p>
+        <button id="noticeAction" type="button" class="notice-action" hidden></button>
 
         <section id="results" hidden>
           <div id="options" class="options" role="group" aria-label="Route options"></div>
           <p id="routeNote" class="note"></p>
           <div class="row">
-            <button id="drive" type="button" disabled>Preview drive</button>
+            <button id="navigate" type="button" class="start" aria-pressed="false" disabled>Start</button>
+            <button id="drive" type="button" class="quiet" disabled>Preview drive</button>
             <label class="inline">
               Speed
               <select id="speed">
@@ -97,6 +108,10 @@
               <option value="loose">Loose: generous zones</option>
             </select>
           </label>
+          <label class="check">
+            <input id="sound" type="checkbox" checked />
+            Chime before and in camera zones while driving
+          </label>
         </details>
 
         <footer>
@@ -106,7 +121,7 @@
             <span class="swatch other" aria-hidden="true"></span> other camera
           </p>
           <p class="legend">Arrows point where a camera looks; zoom in to see its capture zone.</p>
-          <p id="status" class="status">Loading the Dallas road network…</p>
+          <p id="status" class="status">Loading…</p>
         </footer>
       </div>
     </aside>
@@ -118,6 +133,26 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="7.5" fill="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
       </button>
     </div>
+
+    <dialog id="chooser" class="chooser" aria-labelledby="chooserTitle">
+      <div class="chooser-head">
+        <h2 id="chooserTitle" tabindex="-1" autofocus>Where do you drive?</h2>
+        <button id="chooserClose" type="button" class="icon-btn" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <p id="chooserLede" class="lede"></p>
+      <button id="chooserLocate" type="button" class="locate-btn">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="7.5" fill="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+        Use my location
+      </button>
+      <p id="chooserNotice" class="notice" role="status" hidden></p>
+      <div id="chooserNearby" class="chooser-nearby"></div>
+      <input id="chooserSearch" type="search" placeholder="Search for a city or state" autocomplete="off"
+        spellcheck="false" aria-label="Search the areas" />
+      <div id="chooserList" class="chooser-list"></div>
+      <p id="chooserEmpty" class="note" hidden>No area matches. AvoiDLPR covers metro areas, listed under their state.</p>
+    </dialog>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

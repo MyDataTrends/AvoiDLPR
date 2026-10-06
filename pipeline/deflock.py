@@ -17,7 +17,7 @@ from collections.abc import Callable
 
 CDN = "https://cdn.deflock.me/regions"
 TILE_DEG = 20
-USER_AGENT = "flockwatch-pipeline/0.1 (+https://github.com/flockwatch)"
+USER_AGENT = "avoidlpr-pipeline/0.2 (+https://github.com/MyDataTrends/AvoiDLPR)"
 
 Fetch = Callable[[str], bytes | None]
 
@@ -39,6 +39,18 @@ def http_get(url: str, *, attempts: int = 4, timeout: float = 60.0) -> bytes | N
                 raise
         time.sleep(2 * attempt)
     return None
+
+
+def caching(fetch: Fetch = http_get) -> Fetch:
+    """`fetch`, but each URL only once: every region in a tile reads the same multi-megabyte file."""
+    memo: dict[str, bytes | None] = {}
+
+    def get(url: str) -> bytes | None:
+        if url not in memo:
+            memo[url] = fetch(url)
+        return memo[url]
+
+    return get
 
 
 def tile_origins(bbox: tuple[float, float, float, float]) -> list[tuple[int, int]]:

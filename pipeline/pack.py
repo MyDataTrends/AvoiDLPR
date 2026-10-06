@@ -74,12 +74,17 @@ def write_pack(path: Path, meta: dict, sections: dict[str, np.ndarray]) -> int:
         offset += len(data)
     header = json.dumps({**meta, "sections": table}, separators=(",", ":")).encode()
     header += b" " * (-(12 + len(header)) % 8)
-    with open(path, "wb") as f:
+    # Write beside the target and rename over it: never half a pack, and a hard link to the old
+    # file elsewhere keeps the old bytes.
+    path = Path(path)
+    tmp = path.with_name(path.name + ".partial")
+    with open(tmp, "wb") as f:
         f.write(MAGIC)
         f.write(np.array([VERSION, len(header)], "<u4").tobytes())
         f.write(header)
         for blob in blobs:
             f.write(blob)
+    tmp.replace(path)
     return 12 + len(header) + offset
 
 

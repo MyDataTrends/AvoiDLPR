@@ -46,12 +46,15 @@ export interface Stats {
 }
 
 export type Request =
-  | { type: "load"; packUrl: string; camerasUrl: string; profile: ProfileName }
+  /** `packBytes` is the download's size from the manifest, for the progress bar. */
+  | { type: "load"; packUrl: string; packBytes: number; camerasUrl: string; profile: ProfileName }
   | { type: "profile"; profile: ProfileName }
   | { type: "route"; id: number; from: LonLat; to: LonLat }
   | { type: "capturing"; id: number; lon: number; lat: number; heading: number };
 
 export type Response =
+  /** The road pack downloading (bytes so far of `total`), then being unzipped. */
+  | { type: "progress"; loaded: number; total: number; unpacking?: boolean }
   | { type: "ready"; stats: Stats; cameras: CameraDTO[]; zone: ZoneParams }
   /** `routes` run fastest first, each with strictly fewer camera zones than the last. */
   | { type: "route"; id: number; routes: RouteDTO[]; recommended: number; probes: number; ms: number }

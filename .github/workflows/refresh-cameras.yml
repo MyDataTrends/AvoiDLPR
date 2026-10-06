@@ -1,8 +1,12 @@
 name: Refresh cameras
 
-# Hourly: pull the latest camera locations from DeFlock's published tiles and publish each region's
-# feed to the data bucket. The app revalidates the feed on every load, so changes reach users
-# within the hour. Nothing else (roads, basemap) is touched.
+# Hourly: pull the latest camera locations from DeFlock's published tiles and publish the feed of
+# every region that's online. The app revalidates the feeds on every load, so changes reach users
+# within the hour. Roads and basemaps are left alone.
+#
+# Once a day it also deletes the road packs and basemaps that regions.json no longer names
+# (superseded by the monthly build), once that manifest has been live for a day: it keeps the
+# bucket at one copy of the map data, inside the storage free tier.
 #
 # Needs these in the repository's Settings > Secrets and variables > Actions:
 #   secrets:   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
@@ -35,7 +39,7 @@ jobs:
     # you) every hour. A manual run still goes ahead, and the first step says what's missing.
     if: vars.R2_BUCKET != '' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check the bucket is configured
         run: |
@@ -44,23 +48,50 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
       # The refresh refuses to replace a feed with one less than half its size (a DeFlock outage
-      # must never publish an empty map), so it needs the feed that is currently live.
-      - name: Download the live feeds
-        run: aws s3 cp "s3://$R2_BUCKET/cameras" release/cameras --recursive --endpoint-url "$R2_ENDPOINT" || true
+      # must never publish an empty map), so it needs the feeds that are live; and it only
+      # refreshes the regions the live manifest lists.
+      - name: Download what's live
+        id: live
+        run: |
+          mkdir -p release
+          if aws s3 cp "s3://$R2_BUCKET/regions.json" release/regions.json --endpoint-url "$R2_ENDPOINT" --only-show-errors; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            aws s3 cp "s3://$R2_BUCKET/cameras" release/cameras --recursive --endpoint-url "$R2_ENDPOINT" --only-show-errors || true
+          else
+            echo "::notice::Nothing is published yet, so there's nothing to refresh: run Build map data first."
+          fi
 
       - name: Refresh from DeFlock
-        run: python -m pipeline.refresh_cameras --out release
+        if: steps.live.outputs.published == 'true'
+        run: python -m pipeline.refresh_cameras --out release --listed-in release/regions.json
 
+      # Also after a partial failure: the regions that refreshed go out, the rest keep their feed.
       - name: Publish
+        if: always() && steps.live.outputs.published == 'true'
         run: >
           aws s3 cp release/cameras "s3://$R2_BUCKET/cameras" --recursive
-          --endpoint-url "$R2_ENDPOINT"
+          --endpoint-url "$R2_ENDPOINT" --only-show-errors
           --content-type application/json
           --cache-control "public, max-age=0, must-revalidate"
+
+      - name: Delete superseded map data (once a day)
+        if: always() && steps.live.outputs.published == 'true'
+        run: |
+          set -e
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(date -u +%H)" != "05" ]; then exit 0; fi
+          for prefix in packs/ basemap/; do
+            aws s3api list-objects-v2 --bucket "$R2_BUCKET" --prefix "$prefix" --endpoint-url "$R2_ENDPOINT" \
+              --query 'Contents[].Key' --output text >> keys.txt || true
+          done
+          python -m pipeline.prune --manifest release/regions.json --keys keys.txt > stale.txt
+          echo "$(wc -l < stale.txt) superseded files to delete"
+          while read -r key; do
+            [ -n "$key" ] && aws s3 rm "s3://$R2_BUCKET/$key" --endpoint-url "$R2_ENDPOINT" --only-show-errors
+          done < stale.txt

@@ -60,6 +60,9 @@ export interface AlternativeRoutes {
 }
 
 /** Camera prices (seconds of driving per avoided capture) the alternatives sweep tries. */
+/** How far `snap` looks for a road by default (metres). */
+export const SNAP_MAX_M = 600;
+
 const ALTERNATIVE_LAMBDAS = [10, 30, 60, 120, 300, 900, 3000] as const;
 
 /**
@@ -122,8 +125,12 @@ export class Router {
     else this.search = new EdgeSearch(this.pack, this.exposure);
   }
 
-  /** Nearest point on the road network, or null if none is within `maxDistM`. */
-  snap(lon: number, lat: number, maxDistM = 250): Endpoint | null {
+  /**
+   * Nearest point on the road network, or null if none is within `maxDistM`. Packs leave out
+   * unnamed service roads, so a point in a big parking lot or apartment complex can be a few
+   * hundred metres from the nearest road the pack has; 600 m covers those.
+   */
+  snap(lon: number, lat: number, maxDistM = SNAP_MAX_M): Endpoint | null {
     const { proj, vx, vy, vs, vertGeom } = this.pack;
     const x = proj.x(lon), y = proj.y(lat);
     const hit = this.grid.nearest(x, y, maxDistM);

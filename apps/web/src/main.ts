@@ -4,9 +4,12 @@ import "./style.css";
 import { LocalProjection } from "@flockwatch/router";
 import { type LngLat, LngLatBounds, Marker, Popup } from "maplibre-gl";
 
-import { dataUrl, loadManifest, pickRegion } from "./data.ts";
+import { Chooser, type PickHow } from "./chooser.ts";
+import {
+  dataUrl, inBbox, initialRegion, loadManifest, type RegionEntry, regionLabel, regionsContaining, rememberRegion,
+} from "./data.ts";
 import { type Fix, Polyline } from "./drive.ts";
-import { cameraZones, distance, duration, extraTime, gapTime, siteTitle, watches } from "./format.ts";
+import { accuracy, cameraZones, distance, duration, extraTime, gapTime, siteTitle, watches } from "./format.ts";
 import { insideBox, LocateError, locate } from "./location.ts";
 import { type CameraState, createMap, Overlays } from "./map.ts";
 import type { CameraDTO, LonLat, ProfileName, Request, Response, RouteDTO, SiteDTO, Stats } from "./protocol.ts";
@@ -35,22 +38,55 @@ function showBootFailure(err: unknown): never {
   throw err;
 }
 
+// ---------- offline and instant start ----------
+
+if (import.meta.env.PROD && "serviceWorker" in navigator && window.isSecureContext) {
+  // When a new version takes over, reload once so this tab doesn't keep running files the new
+  // service worker has retired. (The first install isn't a takeover: there's nothing stale.)
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (hadController) location.reload();
+  });
+  navigator.serviceWorker.register("/sw.js").catch(() => {
+    /* No service worker (e.g. an untrusted certificate): the app still works, just without offline. */
+  });
+}
+
+/** Set when the area was picked from the device's location: find it again once the new area loads. */
+const LOCATE_AFTER_SWITCH = "avoidlpr.locate";
+
 const manifest = await loadManifest().catch(showBootFailure);
-const region = pickRegion(manifest, new URLSearchParams(location.hash.slice(1)).get("r"));
-/** Names of every region covered, for messages ("Dallas and Austin"). */
-const coveredAreas = new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(manifest.regions.map((r) => r.name));
+const chooser = new Chooser(manifest, (r: RegionEntry, how: PickHow) => {
+  if (r.id === picked?.id) {
+    chooser.close();
+    if (how === "location") void useMyLocation();
+    return;
+  }
+  switchRegion(r, { locate: how === "location" });
+});
+const picked = initialRegion(manifest);
+if (!picked) {
+  // First visit: nothing to show until an area is picked, and picking one reloads the page.
+  setStatus("Choose an area to start.");
+  $("summary").textContent = "Choose your area";
+  chooser.open({ required: true });
+  await new Promise<never>(() => {});
+}
+const region: RegionEntry = picked!;
+rememberRegion(region.id);
 document.title = `AvoiDLPR · ${region.name}`;
-$("lede").textContent = `Routes around license-plate cameras in ${region.name}. Everything is computed in this tab: your start and destination never leave it.`;
+$("lede").textContent = `Routes around license-plate cameras in the ${region.name} area. Everything is computed on this device: your start and destination never leave it.`;
 $("example").hidden = !region.example;
+$("regionName").textContent = regionLabel(region);
+$("regionBtn").hidden = manifest.regions.length < 2;
+setStatus(`Loading the ${region.name} road network…`);
 
 type Stop = "from" | "to";
 
-interface Drive {
+/** What a drive preview and live navigation both keep while following a route. */
+interface Following {
   line: Polyline;
   route: RouteDTO;
-  t0: number;
-  speed: number;
-  raf: number;
   lastQuery: number;
   queryId: number;
   /** Sites the worker's live check says hold the car (position + heading). */
@@ -58,8 +94,32 @@ interface Drive {
   /** What the zone banner shows, and until when (performance.now()). */
   zone: string;
   zoneUntil: number;
-  /** Route distance at the previous frame: zones are tested against the whole stretch since. */
+  /** Route distance at the previous frame or fix: zones are tested against the whole stretch since. */
   lastDistM: number;
+}
+
+/** A drive preview: the route played back at `speed` times real time. */
+interface Drive extends Following {
+  t0: number;
+  speed: number;
+  raf: number;
+}
+
+/** Live navigation: the device's GPS fixes, matched to the route. */
+interface Nav extends Following {
+  watchId: number;
+  /** Fixes in a row that were off the route. */
+  offCount: number;
+  lastReroute: number;
+  /** Sites already announced with a chime. */
+  announced: Set<number>;
+  /** What the banner showed for the previous fix, so a chime sounds on a change only. */
+  shown: string;
+  wake: WakeLockSentinel | null;
+  /** Metres per second, from the last fix that had one. */
+  speedMps: number;
+  /** The last fix, for re-centring the map on the car. */
+  at: LonLat | null;
 }
 
 const state = {
@@ -82,7 +142,12 @@ const state = {
   /** Zoom to the next set of routes (a new trip), not to a recomputation of the same one. */
   fitNext: false,
   notice: null as string | null,
+  /** A button under the notice ("Switch to Charlotte"). */
+  noticeAction: null as { label: string; run: () => void } | null,
+  /** The road pack's download, until the worker says it's ready. */
+  progress: null as { loaded: number; total: number; unpacking?: boolean } | null,
   drive: null as Drive | null,
+  nav: null as Nav | null,
   sheetBeforeDrive: null as "peek" | "half" | "full" | null,
 };
 
@@ -143,6 +208,7 @@ function gpsDot(): HTMLElement {
 
 /** Change either or both ends of the trip. Locations from GPS carry their accuracy. */
 function setStops(p: { from?: LonLat | null; to?: LonLat | null; gps?: { accuracyM: number } | null }): void {
+  stopNav();
   if ("from" in p) {
     state.from = p.from ?? null;
     state.fromGps = p.from ? (p.gps ?? null) : null;
@@ -151,8 +217,75 @@ function setStops(p: { from?: LonLat | null; to?: LonLat | null; gps?: { accurac
   state.target = state.from ? "to" : "from";
   state.fitNext = Boolean(state.from && state.to);
   state.notice = null;
+  state.noticeAction = null;
   writeHash();
+  if (offerAreaForTrip()) {
+    stopDrive();
+    state.routes = null;
+    render();
+    return;
+  }
   requestRoute();
+}
+
+/**
+ * A pin outside this area can't be routed to: say so, and offer an area that holds the whole trip
+ * if there is one (neighbouring areas overlap). Returns whether the trip is out of bounds.
+ */
+function offerAreaForTrip(): boolean {
+  const pins = [state.from, state.to].filter((p): p is LonLat => p !== null);
+  if (pins.every(([lon, lat]) => inBbox(region.bbox, lon, lat))) return false;
+  const there = regionsContaining(manifest, ...pins)[0];
+  if (there) {
+    offer(`That's outside the ${region.name} area, but the whole trip fits in ${there.name}.`, `Open ${there.name}`,
+      () => switchRegion(there, { from: state.fromGps ? null : state.from, to: state.to, locate: Boolean(state.fromGps) }));
+  } else {
+    offer(`That's outside the ${region.name} area. AvoiDLPR plans trips inside one area at a time.`, "See the areas",
+      () => chooser.open({ current: region.id }));
+  }
+  return true;
+}
+
+/** A notice with a button that does something about it, raised into view on a phone. */
+function offer(text: string, label: string, run: () => void): void {
+  state.notice = text;
+  state.noticeAction = { label, run };
+  render();
+  if (sheet.isSheet && sheet.state === "peek") sheet.set("half");
+  $("notice").scrollIntoView({ block: "nearest" });
+}
+
+/**
+ * Open another area. It's remembered on this device and the page reloads into it. Pins that
+ * came from taps travel in the link; a GPS start never does: it's looked up again after the load.
+ */
+function switchRegion(r: RegionEntry, opts: { from?: LonLat | null; to?: LonLat | null; locate?: boolean } = {}): void {
+  rememberRegion(r.id);
+  const p = new URLSearchParams();
+  if (opts.from) p.set("from", opts.from.map((v) => v.toFixed(5)).join(","));
+  if (opts.to) p.set("to", opts.to.map((v) => v.toFixed(5)).join(","));
+  p.set("r", r.id); // in case this browser can't remember: the reload still knows where to go
+  if (opts.locate) setFlag(LOCATE_AFTER_SWITCH);
+  history.replaceState(null, "", `${location.pathname}${location.search}#${p}`);
+  location.reload();
+}
+
+function setFlag(key: string): void {
+  try {
+    sessionStorage.setItem(key, "1");
+  } catch {
+    /* storage blocked: the user taps the location button themselves */
+  }
+}
+
+function takeFlag(key: string): boolean {
+  try {
+    const set = sessionStorage.getItem(key) === "1";
+    sessionStorage.removeItem(key);
+    return set;
+  } catch {
+    return false;
+  }
 }
 
 function requestRoute(): void {
@@ -166,7 +299,11 @@ function requestRoute(): void {
 
 worker.onmessage = (ev: MessageEvent<Response>) => {
   const msg = ev.data;
-  if (msg.type === "ready") {
+  if (msg.type === "progress") {
+    state.progress = msg;
+    $("summary").textContent = summary();
+  } else if (msg.type === "ready") {
+    state.progress = null;
     state.stats = msg.stats;
     state.cameras = msg.cameras;
     state.zoneRangeM = msg.zone.rangeM;
@@ -181,6 +318,7 @@ worker.onmessage = (ev: MessageEvent<Response>) => {
     state.selected = msg.recommended;
     state.info = { ms: msg.ms, probes: msg.probes };
     state.routing = false;
+    followSelectedRoute();
     render();
     if (state.fitNext) fitRoutes();
   } else if (msg.type === "noroute") {
@@ -189,7 +327,8 @@ worker.onmessage = (ev: MessageEvent<Response>) => {
     state.notice = msg.reason;
     render();
   } else if (msg.type === "capturing") {
-    if (state.drive && msg.id === state.drive.queryId) state.drive.inZone = msg.sites;
+    const following = state.drive ?? state.nav;
+    if (following && msg.id === following.queryId) following.inZone = msg.sites;
   } else {
     state.routing = false;
     setStatus(`Error: ${msg.message}`);
@@ -226,10 +365,14 @@ function render(): void {
   const notice = $("notice");
   notice.hidden = !state.notice;
   notice.textContent = state.notice;
+  const action = $("noticeAction");
+  action.hidden = !(state.notice && state.noticeAction);
+  action.textContent = state.noticeAction?.label ?? "";
 
   $("summary").textContent = summary();
   $("results").hidden = !(state.from && state.to);
   $<HTMLButtonElement>("drive").disabled = !route;
+  syncNavButtons(Boolean(route));
   if (!routes || !route) {
     $("options").replaceChildren();
     $("routeNote").textContent = state.routing ? "Finding routes…" : "";
@@ -263,7 +406,20 @@ function render(): void {
 }
 
 function summary(): string {
-  if (!state.stats) return "Loading the road network…";
+  if (state.nav) {
+    const nav = state.nav;
+    const left = Math.max(0, nav.line.lengthM - nav.lastDistM);
+    const zones = nav.route.sites.filter((s) => s.untilM > nav.lastDistM).length;
+    return `${duration(nav.route.timeS * (left / Math.max(1, nav.line.lengthM)))} · ${distance(left)} · ${cameraZones(zones)} ahead`;
+  }
+  if (!state.stats) {
+    const p = state.progress;
+    if (p?.unpacking) return `Unpacking the ${region.name} road map…`;
+    if (p && p.total > 0) {
+      return `Downloading the ${region.name} road map… ${(p.loaded / 1e6).toFixed(1)} of ${(p.total / 1e6).toFixed(1)} MB`;
+    }
+    return `Loading the ${region.name} road map…`;
+  }
   if (!state.from && !state.to) return "Tap the map to set a start, or use your location";
   if (!state.to) return "Tap the map to set your destination";
   if (!state.from) return "Tap the map to set your start";
@@ -284,7 +440,7 @@ function renderStops(): void {
 
   const text = (p: LonLat | null, empty: string) => (p ? `${p[1].toFixed(4)}, ${p[0].toFixed(4)}` : empty);
   $("fromText").textContent = state.fromGps
-    ? `Your location · ±${Math.round(state.fromGps.accuracyM)} m`
+    ? `Your location · ${accuracy(state.fromGps.accuracyM)}`
     : text(state.from, state.target === "from" ? "Tap the map…" : "Choose a start");
   $("toText").textContent = text(state.to, state.target === "to" ? "Tap the map…" : "Choose a destination");
   $("targetFrom").setAttribute("aria-pressed", String(state.target === "from"));
@@ -358,6 +514,7 @@ function selectRoute(i: number): void {
   if (!state.routes || i === state.selected) return;
   stopDrive();
   state.selected = i;
+  followSelectedRoute();
   render();
 }
 
@@ -421,10 +578,15 @@ function fitRoutes(): void {
 
 // ---------- drive simulation ----------
 
+function routeLine(route: RouteDTO): Polyline {
+  return new Polyline(route.coordinates, new LocalProjection(state.stats!.lat0, state.stats!.lon0));
+}
+
 function startDrive(): void {
   const route = selectedRoute();
   if (!route || !state.stats) return;
-  const line = new Polyline(route.coordinates, new LocalProjection(state.stats.lat0, state.stats.lon0));
+  stopNav();
+  const line = routeLine(route);
   state.drive = {
     line, route, t0: performance.now(), speed: Number($<HTMLSelectElement>("speed").value), raf: 0, lastQuery: 0,
     queryId: 0, inZone: [], zone: "", zoneUntil: 0, lastDistM: 0,
@@ -458,7 +620,11 @@ function tick(now: number): void {
   d.raf = requestAnimationFrame(tick);
 }
 
-function showDriveBanner(fix: Fix, d: Drive, now: number): void {
+/**
+ * Banner for a position along the route; returns what it showed (and for "ahead", which site).
+ * `aheadM` is how early a camera ahead is announced.
+ */
+function showDriveBanner(fix: Fix, d: Following, now: number, aheadM = ALERT_AHEAD_M): { kind: string; site: number } {
   // Test each zone interval against the whole stretch driven since the last frame, so a slow
   // frame (or a sparse GPS fix) can't step over a zone. The worker's live check, the same
   // predicate a phone runs on each fix, backs it up.
@@ -472,14 +638,15 @@ function showDriveBanner(fix: Fix, d: Drive, now: number): void {
   }
   if (now < d.zoneUntil) {
     setBanner("zone", "In a camera zone", d.zone);
-    return;
+    return { kind: "zone", site: -1 };
   }
   const next = d.route.sites.find((s) => s.atM > fix.distM);
-  if (next && next.atM - fix.distM <= ALERT_AHEAD_M) {
+  if (next && next.atM - fix.distM <= aheadM) {
     setBanner("ahead", `Camera ahead in ${distance(next.atM - fix.distM)}`, siteTitle(next));
-  } else {
-    setBanner("clear", "No cameras nearby", `${distance(d.line.lengthM - fix.distM)} to go`);
+    return { kind: "ahead", site: next.site };
   }
+  setBanner("clear", next ? "No cameras nearby" : "No more cameras on this route", `${distance(d.line.lengthM - fix.distM)} to go`);
+  return { kind: "clear", site: -1 };
 }
 
 function follow(fix: Fix): void {
@@ -509,15 +676,212 @@ function stopDrive(message?: string): void {
   }
   setBanner("clear", message);
   setTimeout(() => {
-    if (!state.drive) setBanner(null);
+    if (!state.drive && !state.nav) setBanner(null);
   }, 5000);
 }
+
+// ---------- live navigation ----------
+//
+// Follows the device's GPS along the selected route: a warning before each camera zone, a banner
+// (and a chime) while in one, a new route if you leave this one, and the screen kept awake. Fixes
+// are used in memory only, like every other location in the app. Phones pause web pages that
+// aren't on screen, so this works with the app open and the screen on, which is why it asks the
+// browser to keep the screen awake.
+
+/** Further than this from the route (or 1.5x the fix's accuracy, if worse) counts as off it... */
+const OFF_ROUTE_M = 45;
+/** ...for this many fixes in a row. */
+const OFF_ROUTE_FIXES = 3;
+const REROUTE_GAP_MS = 12_000;
+/** This close to the end of the route is arriving. */
+const ARRIVED_M = 35;
+/** A camera ahead is announced this many seconds out at the current speed (or ALERT_AHEAD_M). */
+const AHEAD_S = 25;
+
+let audio: AudioContext | null = null;
+
+function startNav(): void {
+  const route = selectedRoute();
+  if (!route || !state.stats) return;
+  if (!("geolocation" in navigator) || !window.isSecureContext) {
+    offer("Driving with alerts needs your location, and this browser can't share it here.", "OK", () => {
+      state.notice = null;
+      render();
+    });
+    return;
+  }
+  stopDrive();
+  try {
+    audio ??= new AudioContext(); // created in the tap's handler, so the browser allows sound
+    void audio.resume();
+  } catch {
+    audio = null;
+  }
+  const nav: Nav = {
+    line: routeLine(route), route, lastQuery: 0, queryId: 0, inZone: [], zone: "", zoneUntil: 0, lastDistM: 0,
+    watchId: 0, offCount: 0, lastReroute: 0, announced: new Set(), shown: "", wake: null, speedMps: 0, at: null,
+  };
+  state.nav = nav;
+  nav.watchId = navigator.geolocation.watchPosition(onNavFix, onNavError, {
+    enableHighAccuracy: true, maximumAge: 1000, timeout: 20_000,
+  });
+  void keepAwake(nav);
+  syncNavButtons(true);
+  if (sheet.isSheet) {
+    state.sheetBeforeDrive = sheet.state;
+    sheet.set("peek");
+  }
+  setBanner("clear", "Waiting for GPS…", "Keep the app open with the screen on");
+  render();
+}
+
+async function keepAwake(nav: Nav): Promise<void> {
+  try {
+    nav.wake = (await navigator.wakeLock?.request("screen")) ?? null;
+    nav.wake?.addEventListener("release", () => {
+      if (state.nav === nav) nav.wake = null;
+    });
+  } catch {
+    nav.wake = null; // not supported, or refused (battery saver): navigation still works
+  }
+}
+
+function onNavFix(p: GeolocationPosition): void {
+  const nav = state.nav;
+  if (!nav) return;
+  const { longitude: lon, latitude: lat, accuracy: acc, heading, speed } = p.coords;
+  if (speed !== null && Number.isFinite(speed)) nav.speedMps = speed;
+  const m = nav.line.match(lon, lat, nav.lastDistM);
+  const along = nav.line.at(m.distM);
+  const moving = nav.speedMps > 2 && heading !== null && Number.isFinite(heading);
+  const fix: Fix = { lon, lat, heading: moving ? heading! : along.heading, distM: Math.max(m.distM, nav.lastDistM) };
+  nav.at = [lon, lat];
+  overlays?.setCar(fix);
+  follow(fix);
+  send({ type: "capturing", id: ++nav.queryId, lon, lat, heading: fix.heading });
+
+  // A weak fix (in a garage, under a bridge) mustn't count against the route.
+  nav.offCount = m.offM > Math.max(OFF_ROUTE_M, acc * 1.5) && acc < 150 ? nav.offCount + 1 : 0;
+  if (nav.offCount >= OFF_ROUTE_FIXES) {
+    reroute(nav, lon, lat, acc);
+    return;
+  }
+  if (nav.line.lengthM - m.distM < ARRIVED_M && m.offM < OFF_ROUTE_M * 2) {
+    stopNav(`Arrived · ${cameraZones(nav.route.sites.length)} on the way`);
+    return;
+  }
+  const shown = showDriveBanner(fix, nav, performance.now(), Math.max(ALERT_AHEAD_M, nav.speedMps * AHEAD_S));
+  if (shown.kind === "zone" && nav.shown !== "zone") chime("zone");
+  if (shown.kind === "ahead" && !nav.announced.has(shown.site)) {
+    nav.announced.add(shown.site);
+    chime("ahead");
+  }
+  nav.shown = shown.kind;
+  $("summary").textContent = summary();
+}
+
+function onNavError(err: GeolocationPositionError): void {
+  if (!state.nav) return;
+  if (err.code === err.PERMISSION_DENIED) {
+    stopNav();
+    offer("Location access is blocked, so AvoiDLPR can't follow you. Allow it for this site in your browser's settings.",
+      "OK", () => {
+        state.notice = null;
+        render();
+      });
+    return;
+  }
+  setBanner("ahead", "Waiting for GPS…", "The signal is weak here");
+}
+
+/** Off the route: plan again from where you are, to the same destination, and follow that. */
+function reroute(nav: Nav, lon: number, lat: number, acc: number): void {
+  setBanner("ahead", "Off route", "Finding a new route from here…");
+  nav.offCount = 0;
+  const now = performance.now();
+  if (now - nav.lastReroute < REROUTE_GAP_MS || state.routing || !state.to) return;
+  nav.lastReroute = now;
+  state.from = [lon, lat];
+  state.fromGps = { accuracyM: acc };
+  writeHash();
+  requestRoute();
+}
+
+/** The selected route changed under navigation (a reroute, or a tap on another option). */
+function followSelectedRoute(): void {
+  const nav = state.nav;
+  const route = selectedRoute();
+  if (!nav || !route) return;
+  nav.route = route;
+  nav.line = routeLine(route);
+  nav.lastDistM = 0;
+  nav.zoneUntil = 0;
+}
+
+function chime(kind: "zone" | "ahead"): void {
+  navigator.vibrate?.(kind === "zone" ? [150, 90, 150] : 90);
+  if (!audio || !$<HTMLInputElement>("sound").checked) return;
+  let t = audio.currentTime + 0.01;
+  for (const hz of kind === "zone" ? [880, 660] : [660]) {
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.frequency.value = hz;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t);
+    osc.stop(t + 0.25);
+    t += 0.28;
+  }
+}
+
+function stopNav(message?: string): void {
+  const nav = state.nav;
+  if (!nav) return;
+  navigator.geolocation.clearWatch(nav.watchId);
+  void nav.wake?.release().catch(() => {});
+  state.nav = null;
+  overlays?.setCar(null);
+  if (state.sheetBeforeDrive && sheet.isSheet) sheet.set(state.sheetBeforeDrive);
+  state.sheetBeforeDrive = null;
+  render();
+  if (!message) {
+    setBanner(null);
+    return;
+  }
+  setBanner("clear", message);
+  setTimeout(() => {
+    if (!state.drive && !state.nav) setBanner(null);
+  }, 5000);
+}
+
+/** Start / Stop, in the panel and (on a phone) next to the summary, where it's always in reach. */
+function syncNavButtons(haveRoute: boolean): void {
+  for (const id of ["navigate", "headNav"]) {
+    const b = $<HTMLButtonElement>(id);
+    b.textContent = state.nav ? "Stop" : "Start";
+    b.setAttribute("aria-pressed", String(Boolean(state.nav)));
+    b.disabled = !haveRoute && !state.nav;
+  }
+  $("headNav").hidden = !haveRoute && !state.nav;
+}
+
+// The screen lock is dropped whenever the page is hidden; take it back on return.
+document.addEventListener("visibilitychange", () => {
+  if (state.nav && document.visibilityState === "visible" && !state.nav.wake) void keepAwake(state.nav);
+});
 
 // ---------- current location ----------
 
 let locating = false;
 
 async function useMyLocation(): Promise<void> {
+  if (state.nav) {
+    // Mid-drive the button means "where am I", not "start here".
+    if (state.nav.at) map.easeTo({ center: state.nav.at, zoom: Math.max(map.getZoom(), 15.5), duration: 500 });
+    return;
+  }
   if (locating) return;
   locating = true;
   for (const id of ["locate", "mapLocate"]) {
@@ -529,12 +893,18 @@ async function useMyLocation(): Promise<void> {
   try {
     const fix = await locate();
     if (state.stats && !insideBox(state.stats.bbox, fix.lon, fix.lat)) {
-      state.notice = `You're outside the area AvoiDLPR covers (${coveredAreas}). Tap the map to pick a start inside it.`;
-      render();
+      const there = regionsContaining(manifest, [fix.lon, fix.lat])[0];
+      if (there) {
+        offer(`You're in the ${there.name} area, not ${region.name}.`, `Switch to ${there.name}`,
+          () => switchRegion(there, { locate: true, to: state.to && inBbox(there.bbox, ...state.to) ? state.to : null }));
+      } else {
+        offer(`You're outside the ${region.name} area, and outside every area AvoiDLPR covers so far.`,
+          "See the areas", () => chooser.open({ current: region.id }));
+      }
       return;
     }
     setStops({ from: [fix.lon, fix.lat], gps: { accuracyM: fix.accuracyM } });
-    if (fix.accuracyM > 200) state.notice = `Your location is approximate (±${Math.round(fix.accuracyM)} m).`;
+    if (fix.accuracyM > 200) state.notice = `Your location is approximate (${accuracy(fix.accuracyM)}).`;
     render();
     if (!state.to) map.easeTo({ center: [fix.lon, fix.lat], zoom: Math.max(map.getZoom(), 14) });
   } catch (err) {
@@ -579,7 +949,9 @@ function writeHash(): void {
   if (state.from && !state.fromGps) p.set("from", state.from.map((v) => v.toFixed(5)).join(","));
   if (state.to) p.set("to", state.to.map((v) => v.toFixed(5)).join(","));
   if (state.profile !== "default") p.set("model", state.profile);
-  if (manifest.regions.length > 1) p.set("r", region.id);
+  // The area goes in only with pins, which say more than the area does: a link without them
+  // shouldn't tell anyone which city you opened.
+  if (manifest.regions.length > 1 && (p.has("from") || p.has("to"))) p.set("r", region.id);
   history.replaceState(null, "", p.size ? `#${p}` : location.pathname + location.search);
 }
 
@@ -618,6 +990,7 @@ map.on("click", (e) => {
     selectRoute(other);
     return;
   }
+  if (state.nav) return; // a stray tap mid-drive mustn't end the trip
   setStops({ [state.target]: [e.lngLat.lng, e.lngLat.lat] });
 });
 for (const layer of ["fw-cameras", "fw-cameras-any", "fw-routes"]) {
@@ -652,6 +1025,9 @@ $("clear").addEventListener("click", () => {
   state.fitNext = false;
 });
 $("drive").addEventListener("click", () => (state.drive ? stopDrive() : startDrive()));
+for (const id of ["navigate", "headNav"]) $(id).addEventListener("click", () => (state.nav ? stopNav() : startNav()));
+$("regionBtn").addEventListener("click", () => chooser.open({ current: region.id }));
+$("noticeAction").addEventListener("click", () => state.noticeAction?.run());
 
 // ---------- install to the home screen ----------
 
@@ -675,20 +1051,11 @@ $("installBtn").addEventListener("click", async () => {
 });
 window.addEventListener("appinstalled", () => void ($("install").hidden = true));
 
-// ---------- offline and instant start ----------
-
-if (import.meta.env.PROD && "serviceWorker" in navigator && window.isSecureContext) {
-  // When a new version takes over, reload once so this tab doesn't keep running files the new
-  // service worker has retired. (The first install isn't a takeover: there's nothing stale.)
-  const hadController = Boolean(navigator.serviceWorker.controller);
-  navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (hadController) location.reload();
-  });
-  navigator.serviceWorker.register("/sw.js").catch(() => {
-    /* No service worker (e.g. an untrusted certificate): the app still works, just without offline. */
-  });
-}
-
 readHash();
-send({ type: "load", packUrl: dataUrl(region.pack.path), camerasUrl: dataUrl(region.cameras.path), profile: state.profile });
+writeHash(); // tidies the link: an area id with no pins in it isn't worth keeping in the URL
+send({
+  type: "load", packUrl: dataUrl(region.pack.path), packBytes: region.pack.bytes, camerasUrl: dataUrl(region.cameras.path),
+  profile: state.profile,
+});
 render();
+if (takeFlag(LOCATE_AFTER_SWITCH)) void useMyLocation();

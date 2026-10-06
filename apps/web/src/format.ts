@@ -6,8 +6,30 @@ export function compass(deg: number): string {
   return POINTS[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
 }
 
+/** Miles and feet where people drive by them (the US, Liberia, Myanmar), else kilometres and metres. */
+export const IMPERIAL = (() => {
+  try {
+    return ["US", "LR", "MM"].includes(new Intl.Locale(navigator.language).maximize().region ?? "US");
+  } catch {
+    return true;
+  }
+})();
+
+const FT_PER_M = 3.28084;
+const M_PER_MI = 1609.344;
+
 export function distance(m: number): string {
+  if (IMPERIAL) {
+    if (m < 0.1 * M_PER_MI) return `${Math.max(50, Math.round((m * FT_PER_M) / 50) * 50).toLocaleString("en-US")} ft`;
+    const mi = m / M_PER_MI;
+    return `${mi < 10 ? mi.toFixed(1) : Math.round(mi).toLocaleString("en-US")} mi`;
+  }
   return m < 1000 ? `${Math.max(10, Math.round(m / 10) * 10)} m` : `${(m / 1000).toFixed(1)} km`;
+}
+
+/** A GPS accuracy radius: "±80 ft" or "±25 m". */
+export function accuracy(m: number): string {
+  return IMPERIAL ? `±${Math.max(10, Math.round((m * FT_PER_M) / 10) * 10).toLocaleString("en-US")} ft` : `±${Math.round(m)} m`;
 }
 
 export function duration(s: number): string {
