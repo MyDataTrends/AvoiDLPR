@@ -4,9 +4,12 @@ Usage:
   python -m pipeline.release [--data data] [--out release]
       Everything that's built in data/: packs, basemaps, search indexes, fonts, cameras and
       regions.json.
-  python -m pipeline.release --part NAME --region ID [--region ID ...]
+  python -m pipeline.release --part NAME --region ID [--region ID ...] [--national]
       One build batch: stages those regions' packs, basemaps and search indexes and writes
-      parts/NAME.json.
+      parts/NAME.json. With --national the regions get no basemaps of their own (see --basemap).
+  python -m pipeline.release --basemap
+      The basemap of the whole country (data/basemap/us.pmtiles, from fetch-basemap.mjs --us):
+      stages it and writes parts/basemap.json.
   python -m pipeline.release --assemble [--live live.json]
       Merges every parts/*.json into regions.json. Regions that weren't rebuilt keep their entry
       from --live (the manifest that's online now), so rebuilding one city never drops the rest.
@@ -15,7 +18,9 @@ Usage:
       regions.json                       what exists, where, and how big (short cache)
       packs/<id>.<hash>.fwr.gz           road pack, gzipped, content-hashed (cache forever)
       places/<id>.<hash>.fwp.gz          search index, gzipped, content-hashed (cache forever)
-      basemap/<id>.<hash>.pmtiles        Protomaps extract, content-hashed (cache forever)
+      basemap/us.<hash>.pmtiles          Protomaps extract of the lower 48, content-hashed (cache
+                                         forever); or, before there was one, a basemap per area:
+      basemap/<id>.<hash>.pmtiles
       basemap/assets/...                 label fonts and icon sprites (cache forever)
       cameras/<id>.json                  camera feed, rewritten hourly (revalidate)
       parts/<name>.json                  a build batch's entries; build-time only, never uploaded
@@ -24,6 +29,9 @@ The same tree is what gets uploaded to object storage (see docs/DEPLOY.md) and w
 phone servers serve locally, so development runs the production layout. Hashed names mean a new
 pack or basemap is just a new file plus a new manifest: nothing cached ever goes stale, and old
 files stay valid for pages that are still open.
+
+With a basemap of the whole country, the manifest names it once (`basemap`, with its bounds) and
+every region's `basemap` is that same file, so an app from before reads it as its area's.
 """
 
 from __future__ import annotations
@@ -35,6 +43,7 @@ import hashlib
 import json
 import os
 import shutil
+import struct
 import sys
 from pathlib import Path
 
@@ -44,6 +53,8 @@ from .regions import Region, load_regions
 
 SCHEMA = 2
 HASH_CHARS = 10
+#: The basemap of the whole country: data/basemap/us.pmtiles, staged as basemap/us.<hash>.pmtiles.
+NATIONAL = "us"
 ASSETS = {
     "glyphs": "basemap/assets/fonts/{fontstack}/{range}.pbf",
     "sprite": "basemap/assets/sprites/v4/light",
@@ -113,15 +124,39 @@ def stage_places(region: Region, data: Path, out: Path, live: dict | None = None
     }
 
 
-def pmtiles_maxzoom(path: Path) -> int | None:
+def _pmtiles_header(path: Path) -> bytes | None:
     with open(path, "rb") as f:
         head = f.read(127)
-    return head[101] if head.startswith(b"PMTiles") and len(head) == 127 else None
+    return head if head.startswith(b"PMTiles") and len(head) == 127 else None
 
 
-def stage_region(region: Region, data: Path, out: Path, live: dict | None = None) -> dict | None:
+def pmtiles_maxzoom(path: Path) -> int | None:
+    head = _pmtiles_header(path)
+    return head[101] if head else None
+
+
+def pmtiles_bounds(path: Path) -> list[float] | None:
+    """west, south, east, north from a PMTiles v3 header (degrees, stored as 1e-7 integers)."""
+    head = _pmtiles_header(path)
+    return [round(v / 1e7, 5) for v in struct.unpack_from("<iiii", head, 102)] if head else None
+
+
+def stage_basemap(data: Path, out: Path) -> dict | None:
+    """The whole country's basemap entry, if data/basemap/us.pmtiles was built (else None)."""
+    src = data / "basemap" / f"{NATIONAL}.pmtiles"
+    if not src.exists():
+        return None
+    path, sha = _hashed(src, out / "basemap", NATIONAL, ".pmtiles")
+    return {
+        "path": path.relative_to(out).as_posix(), "bytes": path.stat().st_size, "sha256": sha,
+        "maxzoom": pmtiles_maxzoom(path), "bbox": pmtiles_bounds(path),
+    }
+
+
+def stage_region(region: Region, data: Path, out: Path, live: dict | None = None, national: bool = False) -> dict | None:
     """Stage one region's pack, basemap and search index; returns its manifest entry (None if
     there's nothing to list: a region needs a pack and a basemap; the search index is optional).
+    With `national` it needs no basemap of its own: `assemble` gives it the country's.
 
     `live` is the region's entry in the published manifest. A part that wasn't rebuilt (the
     nightly update builds no basemaps, and leaves out packs it decided not to publish) keeps the
@@ -148,7 +183,7 @@ def stage_region(region: Region, data: Path, out: Path, live: dict | None = None
         w, s, e, n = live["bbox"]
     else:
         return None
-    if basemap.exists():
+    if basemap.exists() and not national:
         base_path, base_sha = _hashed(basemap, out / "basemap", region.id, ".pmtiles")
         base_entry = {
             "path": base_path.relative_to(out).as_posix(), "bytes": base_path.stat().st_size, "sha256": base_sha,
@@ -156,6 +191,8 @@ def stage_region(region: Region, data: Path, out: Path, live: dict | None = None
         }
     elif live_base:
         base_entry = live_base
+    elif national:
+        base_entry = None
     else:
         return None
 
@@ -170,6 +207,8 @@ def stage_region(region: Region, data: Path, out: Path, live: dict | None = None
         "basemap": base_entry,
         "cameras": {"path": f"cameras/{region.id}.json"},
     }
+    if base_entry is None:
+        del entry["basemap"]  # national: `assemble` gives it the country's
     places = stage_places(region, data, out, live)
     if places:
         entry["places"] = places
@@ -188,10 +227,11 @@ def stage_assets(data: Path, out: Path) -> None:
             place(f, dst / f.relative_to(src))
 
 
-def write_part(out: Path, name: str, entries: list[dict]) -> Path:
+def write_part(out: Path, name: str, entries: list[dict], basemap: dict | None = None) -> Path:
     path = out / "parts" / f"{name}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"part": name, "regions": entries}, indent=2) + "\n", encoding="utf-8")
+    part = {"part": name, "regions": entries, **({"basemap": basemap} if basemap else {})}
+    path.write_text(json.dumps(part, indent=2) + "\n", encoding="utf-8")
     return path
 
 
@@ -202,16 +242,30 @@ def read_parts(out: Path) -> list[dict]:
     return entries
 
 
-def assemble(out: Path, regions: list[Region], fresh: list[dict], live: dict | None = None) -> dict:
+def read_basemap_part(out: Path) -> dict | None:
+    """The country's basemap, if a part brought one (`--basemap`)."""
+    for f in sorted((out / "parts").glob("*.json")):
+        basemap = json.loads(f.read_text(encoding="utf-8")).get("basemap")
+        if basemap:
+            return basemap
+    return None
+
+
+def assemble(out: Path, regions: list[Region], fresh: list[dict], live: dict | None = None,
+             basemap: dict | None = None) -> dict:
     """The manifest: fresh entries win, then the live ones; ordered as in regions.json.
 
     A region needs a camera feed in out/cameras to be listed (the app can't run without one), and
-    a region that's no longer in regions.json is dropped.
+    a region that's no longer in regions.json is dropped. The country's basemap is `basemap` if
+    one was just built, else the live manifest's; with one, every region's basemap is it, and
+    without one a region needs a basemap of its own.
     """
     by_id = {e["id"]: e for e in (live or {}).get("regions", [])}
-    if live and live.get("schema") != SCHEMA:
+    reusable = bool(live) and live.get("schema") == SCHEMA
+    if live and not reusable:
         print(f"the live manifest is schema {live.get('schema')}, not {SCHEMA}: not reusing its entries", file=sys.stderr)
         by_id = {}
+    basemap = basemap or (live.get("basemap") if reusable else None)
     by_id.update({e["id"]: e for e in fresh})
     entries = []
     for r in regions:
@@ -221,6 +275,11 @@ def assemble(out: Path, regions: list[Region], fresh: list[dict], live: dict | N
         if not (out / e["cameras"]["path"]).exists():
             print(f"{r.id}: left out, no camera feed at {out / e['cameras']['path']}", file=sys.stderr)
             continue
+        if basemap:
+            e = {**e, "basemap": basemap}
+        elif not e.get("basemap"):
+            print(f"{r.id}: left out, no basemap (and no basemap of the country)", file=sys.stderr)
+            continue
         entries.append(e)
     if not entries:
         raise RuntimeError("nothing to release: no region has a road pack, a basemap and a camera feed")
@@ -228,6 +287,7 @@ def assemble(out: Path, regions: list[Region], fresh: list[dict], live: dict | N
         "schema": SCHEMA,
         "generated_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
         "assets": asset_paths(out),
+        **({"basemap": basemap} if basemap else {}),
         "regions": entries,
     }
 
@@ -254,8 +314,10 @@ def write_manifest(out: Path, manifest: dict) -> None:
 
 
 def stage_release(data: Path, out: Path, regions: list[Region]) -> dict:
-    """Stage everything built in `data` (the local, all-in-one path)."""
-    entries = [e for r in regions if (e := stage_region(r, data, out))]
+    """Stage everything built in `data` (the local, all-in-one path): with the country's basemap
+    if it's there, else each area's own."""
+    basemap = stage_basemap(data, out)
+    entries = [e for r in regions if (e := stage_region(r, data, out, national=bool(basemap)))]
     if not entries:
         raise RuntimeError("nothing to release: no region has both a road pack and a basemap in " + str(data))
     if len(entries) < len(regions):
@@ -267,7 +329,7 @@ def stage_release(data: Path, out: Path, regions: list[Region]) -> dict:
             if not local.exists():
                 raise FileNotFoundError(f"{e['id']}: no camera feed; run `python -m pipeline.refresh_cameras --out {out}`")
             place(local, feed)
-    manifest = assemble(out, regions, entries)
+    manifest = assemble(out, regions, entries, basemap=basemap)
     write_manifest(out, manifest)
     return manifest
 
@@ -276,8 +338,8 @@ def _summary(manifest_or_entries) -> None:
     entries = manifest_or_entries["regions"] if isinstance(manifest_or_entries, dict) else manifest_or_entries
     for r in entries:
         search = f", search {r['places']['bytes'] / 1e6:.1f} MB" if r.get("places") else ", no search index"
-        print(f"{r['id']}: pack {r['pack']['bytes'] / 1e6:.1f} MB gzipped ({r['pack']['edges']:,} edges), "
-              f"basemap {r['basemap']['bytes'] / 1e6:.1f} MB{search}")
+        base = f", basemap {r['basemap']['bytes'] / 1e6:.1f} MB" if r.get("basemap") else ""
+        print(f"{r['id']}: pack {r['pack']['bytes'] / 1e6:.1f} MB gzipped ({r['pack']['edges']:,} edges){base}{search}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -287,7 +349,10 @@ def main(argv: list[str] | None = None) -> int:
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--part", metavar="NAME", help="stage just --region ... and write parts/NAME.json")
     mode.add_argument("--assemble", action="store_true", help="merge parts/*.json (and --live) into regions.json")
+    mode.add_argument("--basemap", action="store_true", help="stage the country's basemap and write parts/basemap.json")
     ap.add_argument("--region", action="append", default=[], help="with --part: a region id (repeatable)")
+    ap.add_argument("--national", action="store_true",
+                    help="with --part: the regions use the country's basemap, so they need none of their own")
     ap.add_argument("--live", type=Path, help="the manifest that's online now, if any: parts reuse its files "
                                                "for what wasn't rebuilt, and --assemble keeps its other regions")
     ap.add_argument("--changed-flag", type=Path,
@@ -297,9 +362,17 @@ def main(argv: list[str] | None = None) -> int:
     live = json.loads(args.live.read_text(encoding="utf-8")) if args.live and args.live.exists() else None
     live_by_id = {e["id"]: e for e in (live or {}).get("regions", [])} if (live or {}).get("schema") == SCHEMA else {}
 
+    if args.basemap:
+        basemap = stage_basemap(args.data, args.out)
+        if not basemap:
+            raise FileNotFoundError(f"no {args.data / 'basemap' / f'{NATIONAL}.pmtiles'}; run fetch-basemap.mjs --us")
+        path = write_part(args.out, "basemap", [], basemap=basemap)
+        print(f"{basemap['path']}: {basemap['bytes'] / 1e9:.1f} GB, zoom {basemap['maxzoom']}, bounds {basemap['bbox']}; wrote {path}")
+        return 0
     if args.part:
         wanted = set(args.region)
-        entries = [e for r in regions if r.id in wanted and (e := stage_region(r, args.data, args.out, live_by_id.get(r.id)))]
+        entries = [e for r in regions if r.id in wanted
+                   and (e := stage_region(r, args.data, args.out, live_by_id.get(r.id), national=args.national))]
         missing = sorted(wanted - {e["id"] for e in entries})
         if missing:
             print(f"not built, so not staged: {', '.join(missing)}", file=sys.stderr)
@@ -310,7 +383,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.assemble:
         if (args.data / "basemap" / "assets").exists():
             stage_assets(args.data, args.out)
-        manifest = assemble(args.out, regions, read_parts(args.out), live)
+        manifest = assemble(args.out, regions, read_parts(args.out), live, basemap=read_basemap_part(args.out))
         changed = not same_manifest(manifest, live)
         if not changed:
             manifest = live  # keep its date: nothing new to announce

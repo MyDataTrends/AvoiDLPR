@@ -11,6 +11,9 @@ const scope = self as unknown as {
 };
 
 let router: Router | null = null;
+/** The load the router came from, and the newest one asked for. */
+let routerLoad = 0;
+let latestLoad = 0;
 let records: CameraRecord[] = [];
 let camerasAt: string | undefined;
 let loaded: { packMB: number; loadMs: number; url: string; fellBack: boolean; failed?: string } = {
@@ -49,6 +52,7 @@ function ready(r: Router): void {
   refreshCameras(r);
   scope.postMessage({
     type: "ready",
+    id: routerLoad,
     cameras: cams,
     zone: r.params,
     ring: r.ring,
@@ -66,38 +70,49 @@ async function fetchFeed(url: string): Promise<Feed> {
   return fetchOk(url, { cache: "no-cache" }).then((r) => r.json() as Promise<Feed>);
 }
 
-/** Download, check and decode a pack: the router, or an error saying what went wrong. */
-async function openPack(url: string, bytes: number, sha256: string | undefined, params: ProfileName): Promise<Router> {
-  const pack = await fetchData(url, bytes, sha256, "road map", (p) => scope.postMessage({ type: "progress", ...p }));
-  loaded.packMB = pack.byteLength / 1e6;
-  return Router.fromBuffer(pack, records, { params: PROFILES[params], ring: RINGS[params] });
+/**
+ * Download, check and decode a pack with these cameras: the router, or an error saying what went
+ * wrong. Progress is tagged with the load's id; `sized` gets the download's size in MB.
+ */
+async function openPack(id: number, url: string, bytes: number, sha256: string | undefined, params: ProfileName,
+  cameras: CameraRecord[], sized: (mb: number) => void): Promise<Router> {
+  const pack = await fetchData(url, bytes, sha256, "road map", (p) => scope.postMessage({ type: "progress", id, ...p }));
+  sized(pack.byteLength / 1e6);
+  return Router.fromBuffer(pack, cameras, { params: PROFILES[params], ring: RINGS[params] });
 }
 
 scope.onmessage = async (ev) => {
   const msg = ev.data;
   try {
     if (msg.type === "load") {
+      // Loads overlap when areas change quickly: only the newest becomes the router.
+      latestLoad = msg.id;
+      const stale = () => msg.id !== latestLoad;
       const t0 = performance.now();
       const feed = await fetchFeed(msg.camerasUrl);
-      records = feed.cameras;
-      camerasAt = feed.built_at;
+      if (stale()) return;
       // A new pack that won't download, doesn't match its checksum or doesn't decode gives way to
       // the last one that worked, which the service worker still has.
       let next: Router;
-      loaded = { packMB: 0, loadMs: 0, url: msg.packUrl, fellBack: false };
+      let got = { packMB: 0, loadMs: 0, url: msg.packUrl, fellBack: false } as typeof loaded;
       try {
-        next = await openPack(msg.packUrl, msg.packBytes, msg.packSha256, msg.profile);
+        next = await openPack(msg.id, msg.packUrl, msg.packBytes, msg.packSha256, msg.profile, feed.cameras, (mb) => (got.packMB = mb));
       } catch (err) {
+        if (stale()) return;
         if (!msg.fallback) {
-          scope.postMessage({ type: "error", message: err instanceof Error ? err.message : String(err), badPack: msg.packUrl });
+          scope.postMessage({ type: "error", id: msg.id, message: err instanceof Error ? err.message : String(err), badPack: msg.packUrl });
           return;
         }
         console.warn(`road map ${msg.packUrl} failed (${err instanceof Error ? err.message : err}); using ${msg.fallback.url}`);
-        loaded = { packMB: 0, loadMs: 0, url: msg.fallback.url, fellBack: true, failed: msg.packUrl };
-        next = await openPack(msg.fallback.url, 0, msg.fallback.sha256, msg.profile);
+        got = { packMB: 0, loadMs: 0, url: msg.fallback.url, fellBack: true, failed: msg.packUrl };
+        next = await openPack(msg.id, msg.fallback.url, 0, msg.fallback.sha256, msg.profile, feed.cameras, (mb) => (got.packMB = mb));
       }
+      if (stale()) return;
       router = next;
-      loaded.loadMs = performance.now() - t0;
+      routerLoad = msg.id;
+      records = feed.cameras;
+      camerasAt = feed.built_at;
+      loaded = { ...got, loadMs: performance.now() - t0 };
       ready(router);
       return;
     }

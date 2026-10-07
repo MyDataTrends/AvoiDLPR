@@ -3,9 +3,12 @@
 The AvoiDLPR app: camera-aware routing and navigation in the browser, for phones and desktops.
 It looks and works like other map apps; [docs/DESIGN.md](../../docs/DESIGN.md) has the design.
 
-- **Pick your area.** The first visit asks where you drive: a searchable list of the metro areas
-  in the manifest, grouped by state, or **Use my location**. The choice is remembered on the
-  device; **Change** in the menu switches it.
+- **Areas load as you go.** With the country's basemap (the manifest's `basemap`), the app opens
+  on the whole lower 48, or on the area you used last. Settle on a city with nothing planned
+  (zoom 9 or closer), search for it by name, tap a destination there, or press the locate
+  button, and that area's road pack, cameras and search index load in place, with no reload.
+  The area is remembered on the device; **Change** in the menu lists them all. With a basemap
+  per area instead (an older release, or a local one), the first visit asks where you drive.
 - **Where to?** With nothing planned, the app is the map, a **Where to?** box and quick searches
   (gas, coffee, groceries, food, and a sample trip). The From and To fields are search boxes:
   type an address, a street, a place (a store, a stadium, the airport) or coordinates, and pick
@@ -41,8 +44,9 @@ where you are.
 ## Where the data comes from
 
 The app boots by fetching `regions.json`, a manifest listing each region's road pack, search
-index, camera feed and basemap, and names everything else from it ([`src/data.ts`](src/data.ts)). Where that
-manifest lives is `VITE_DATA_BASE` (a URL, set when the app is built):
+index, camera feed and basemap, and the basemap of the whole country, and names everything else
+from it ([`src/data.ts`](src/data.ts)). Where that manifest lives is `VITE_DATA_BASE` (a URL, set when the
+app is built):
 
 - **Development and `npm run phone`:** unset, so the data is served from this same origin: the
   dev and preview servers serve the staged `release/` directory at the site root
@@ -65,7 +69,8 @@ The basemap fetch (`npm run fetch-basemap -w @flockwatch/web [-- --region dallas
 extract covering the area's road pack (20 to 120 MB at zoom 0–15; one over `--max-mb`, default
 150, drops to zoom 14) out of Protomaps' newest planet build, using HTTP range requests, and
 downloads the label fonts and icon sprites the style uses. It needs the pmtiles CLI on PATH or in
-`tools/pmtiles/`.
+`tools/pmtiles/`. `-- --us` cuts the whole lower 48 instead, about 16 GB; the monthly build does
+that on GitHub, and a metro extract is all you need to develop.
 
 Browsers only share a location on secure pages: `localhost` counts, but a deployed copy needs
 HTTPS.
@@ -78,7 +83,8 @@ worker keeps the last pack that loaded, and the worker falls back to it, saying 
 fails is evicted from the cache so the next try downloads it again. The app looks for a new
 manifest whenever it comes back on screen (and every half hour while it's on): new cameras apply
 at once; a new pack, search index or basemap waits until no trip is being driven or previewed. A
-new search index swaps in on its own, without reloading the road map. *About the data*, in the
+new search index swaps in on its own, without reloading the road map, and a new basemap swaps
+into the map in place. *About the data*, in the
 menu, shows how current the roads and cameras are.
 
 ## Install it like an app, and offline
@@ -213,9 +219,15 @@ place by name, an address, a street, an approximate house number, coordinates, n
 keyboard, swapping, naming a tapped spot, a place set back from the road still getting a route,
 and that search talks to nothing but the site. It needs Dallas's search index staged.
 
-[`e2e/areas.cjs`](e2e/areas.cjs) (28 checks) covers choosing an area: the first-visit chooser,
-search, picking by list and by location, remembering, trips that leave the area, and storage
-being blocked. It serves its own three-area manifest, so it only needs Dallas staged.
+[`e2e/areas.cjs`](e2e/areas.cjs) (29 checks) covers choosing an area with a basemap per area: the
+first-visit chooser, search, picking by list and by location, remembering, trips that leave the
+area, and storage being blocked, every switch in place. It serves its own three-area manifest, so
+it only needs Dallas staged.
+[`e2e/nationwide.cjs`](e2e/nationwide.cjs) (21 checks) covers the country's basemap: the first
+visit on the lower 48 with nothing to choose, a map that isn't fenced in, and areas loading as you
+go (settling on a city, searching for one, a destination that fits in another, your location),
+with no reloads and no flip-flopping where areas overlap. It serves a manifest in that form,
+reusing Dallas's files.
 [`e2e/navigate.cjs`](e2e/navigate.cjs) (17 checks) drives the example trip with fed GPS fixes:
 the camera-ahead, in-zone and near-a-camera alerts, the route card's count of cameras it passes
 near, going off route and rerouting, arriving, and that no position reaches the URL.
@@ -267,5 +279,5 @@ node ~/.claude/skills/playwright-skill/run.js e2e/production.cjs
 - **Fixed playback speed.** The drive plays back at the route's average speed, not per-road
   speeds.
 - **Offline tiles.** Offline covers the app, roads and cameras, not map tiles.
-- **One area at a time.** A trip has to fit in one area (or the overlap of two); there's no
-  routing from one metro to another.
+- **Routing one area at a time.** The map covers the country, but a trip has to fit in one area
+  (or the overlap of two); there's no routing from one metro to another, and none outside them.

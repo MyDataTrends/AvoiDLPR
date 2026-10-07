@@ -89,7 +89,9 @@ route or following your ride always targets the part of the map you can see.
 - **Where to?** The To field itself, styled as a pill with a search icon. Tapping it opens the
   search, with the From field above it.
 - **Quick searches.** Chips under the pill: *Try a sample trip*, Gas, Coffee, Groceries, Food. A
-  chip opens the search with its words typed in.
+  chip opens the search with its words typed in. Before any area is loaded (a first visit, on the
+  map of the whole country) a hint takes their place: *Zoom in on a city, or search for one*, and
+  the search offers areas by name, with a skyline icon.
 - **Route option.** A card: the time large, its label beside it (Fastest, Balanced, Fewer cameras,
   Fewest cameras) with a *Recommended* badge, then the extra time and distance, and the
   camera-zone count on a soft red badge (green for none). Cameras it only passes near (their

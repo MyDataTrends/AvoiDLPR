@@ -55,8 +55,9 @@ export interface Stats {
 
 export type Request =
   /** `packBytes` is the download's size from the manifest, for the progress bar. */
+  /** `id` numbers the loads: when the next area is asked for before this one is in, this one's dropped. */
   | {
-    type: "load"; packUrl: string; packBytes: number; packSha256?: string; camerasUrl: string; profile: ProfileName;
+    type: "load"; id: number; packUrl: string; packBytes: number; packSha256?: string; camerasUrl: string; profile: ProfileName;
     /** The last pack that loaded, used if this one fails (download, checksum or decode). */
     fallback?: { url: string; sha256?: string } | null;
   }
@@ -68,11 +69,11 @@ export type Request =
   | { type: "capturing"; id: number; lon: number; lat: number; heading: number };
 
 export type Response =
-  /** The road pack downloading (bytes so far of `total`), then being unzipped. */
-  | { type: "progress"; loaded: number; total: number; unpacking?: boolean }
-  /** `pack.fellBack`: the new pack failed and the previous one is in use. */
+  /** The road pack downloading (bytes so far of `total`), then being unzipped. `id`: the load's. */
+  | { type: "progress"; id: number; loaded: number; total: number; unpacking?: boolean }
+  /** `pack.fellBack`: the new pack failed and the previous one is in use. `id`: the load the router came from. */
   | {
-    type: "ready"; stats: Stats; cameras: CameraDTO[]; zone: ZoneParams; ring: ZoneParams | null;
+    type: "ready"; id: number; stats: Stats; cameras: CameraDTO[]; zone: ZoneParams; ring: ZoneParams | null;
     pack: { url: string; fellBack: boolean; failed?: string };
   }
   /** `routes` run fastest first, each with strictly fewer cameras than the last (zones, then rings). */
@@ -80,8 +81,8 @@ export type Response =
   | { type: "noroute"; id: number; reason: string }
   /** Sites whose zone holds the car here, and those whose ring alone does. */
   | { type: "capturing"; id: number; sites: number[]; near: number[] }
-  /** `badPack`: a road pack that failed its checks, so the cached copy should go. */
-  | { type: "error"; message: string; badPack?: string };
+  /** `badPack`: a road pack that failed its checks, so the cached copy should go. `id`: the load that failed, if one did. */
+  | { type: "error"; message: string; badPack?: string; id?: number };
 
 export type SearchRequest =
   /** Download (or take from the cache) an area's place index, replacing any other. */

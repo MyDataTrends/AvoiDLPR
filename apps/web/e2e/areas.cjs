@@ -1,6 +1,8 @@
-// End-to-end check of choosing an area: the first-visit chooser, search, picking by list and by
-// location, remembering the choice, and trips that leave the area. It needs the dev server on
-// :5173 with a staged release, and Playwright with Chromium. With the playwright skill:
+// End-to-end check of choosing an area, with a basemap per area (nationwide.cjs covers the
+// country's): the first-visit chooser, search, picking by list and by location, remembering the
+// choice, and trips that leave the area. Every switch happens in place, with no reload. It needs
+// the dev server on :5173 with a staged release, and Playwright with Chromium. With the
+// playwright skill:
 //   node ~/.claude/skills/playwright-skill/run.js apps/web/e2e/areas.cjs
 // The release only has to hold Dallas: the test serves a manifest that adds two more areas
 // (reusing Dallas's files), so it runs on any machine that can run the app.
@@ -41,6 +43,10 @@ const ready = async (page) => {
   await page.waitForFunction(() => window.__fw?.map.loaded(), null, { timeout: 90_000 });
 };
 const chooserOpen = (page) => page.evaluate(() => document.getElementById('chooser').open);
+const area = (page, name) => page.waitForFunction((n) => document.getElementById('regionName').textContent === n, name, { timeout: 30_000 });
+/** Set once the page is up: a reload would lose it. */
+const mark = (page) => page.evaluate(() => void (window.__sameVisit = true));
+const sameVisit = (page) => page.evaluate(() => window.__sameVisit === true);
 
 (async () => {
   const errors = [];
@@ -73,10 +79,12 @@ const chooserOpen = (page) => page.evaluate(() => document.getElementById('choos
     check('nothing is in the URL before an area is chosen', !(await page.evaluate(() => location.hash)));
 
     // ---------- pick by location: Dallas downtown is in both Dallas and Fort Worth; Dallas holds it best ----------
-    await Promise.all([page.waitForEvent('load'), page.locator('#chooserLocate').tap()]);
+    await mark(page);
+    await page.locator('#chooserLocate').tap();
     await ready(page);
     check('locating picks the area you are in (the one you sit deepest inside)',
       (await page.locator('#regionName').innerText()) === 'Dallas, TX', await page.locator('#regionName').innerText());
+    check('and opens it in place, with no reload', await sameVisit(page) && !(await chooserOpen(page)));
     await page.waitForFunction(() => document.getElementById('fromInput').value.startsWith('Your location'), null, { timeout: 15_000 });
     check('after a pick by location, the start is your location', true);
     check('the URL keeps neither the area nor the location', !/r=|from=/.test(await page.evaluate(() => location.hash)),
@@ -100,6 +108,7 @@ const chooserOpen = (page) => page.evaluate(() => document.getElementById('choos
 
     // ---------- a trip that leaves the area ----------
     // A reload forgets a GPS start (it's never stored), so find it again first.
+    await mark(page);
     await page.locator('#mapLocate').tap();
     await page.waitForFunction(() => document.getElementById('fromInput').value.startsWith('Your location'), null, { timeout: 15_000 });
     const tap = async (lon, lat) => {
@@ -116,13 +125,14 @@ const chooserOpen = (page) => page.evaluate(() => document.getElementById('choos
       /fits in Fort Worth/.test(await page.locator('#notice').innerText()) && /Fort Worth/.test(await page.locator('#noticeAction').innerText()),
       `${await page.locator('#notice').innerText()} / ${await page.locator('#noticeAction').innerText()}`);
     check('no route is attempted outside the area', (await page.evaluate(() => window.__fw.state.routes)) === null);
-    await Promise.all([page.waitForEvent('load'), page.locator('#noticeAction').tap()]);
+    await page.locator('#noticeAction').tap();
+    await area(page, 'Fort Worth–Arlington, TX');
     await ready(page);
-    check('switching opens the other area', (await page.locator('#regionName').innerText()) === 'Fort Worth–Arlington, TX');
+    check('switching opens the other area, in place', await sameVisit(page));
     const hash = await page.evaluate(() => location.hash);
-    check('the destination came along; the GPS start did not', /to=/.test(hash) && !/from=/.test(hash), hash);
-    await page.waitForFunction(() => document.getElementById('fromInput').value.startsWith('Your location'), null, { timeout: 15_000 });
-    check('and the start was found again from the device', true);
+    check('the destination came along, in the link; the GPS start stays out of it', /to=/.test(hash) && !/from=/.test(hash), hash);
+    check('and the start, your location, came along too (it\'s inside this area as well)',
+      (await page.locator('#fromInput').inputValue()).startsWith('Your location'));
     await ctx.close();
 
     // ---------- outside every area ----------
@@ -137,12 +147,13 @@ const chooserOpen = (page) => page.evaluate(() => document.getElementById('choos
     const nearby = await fp.locator('#chooserNearby .area-name').allInnerTexts();
     check('outside coverage, the nearest areas are offered, closest first', nearby[0] === 'Charlotte' && nearby.length === 3, nearby.join(', '));
     check('with their distance', /km away/.test(await fp.locator('#chooserNearby .area-meta').first().innerText()));
-    await Promise.all([fp.waitForEvent('load'), fp.locator('#chooserList .area', { hasText: 'Dallas' }).tap()]);
+    await fp.locator('#chooserList .area', { hasText: 'Dallas' }).tap();
     await ready(fp);
-    check('picking from the list opens that area', (await fp.locator('#regionName').innerText()) === 'Dallas, TX');
+    check('picking from the list opens that area', (await fp.locator('#regionName').innerText()) === 'Dallas, TX'
+      && !(await chooserOpen(fp)));
     await far.close();
 
-    // ---------- storage blocked: the pick still lands, through the URL ----------
+    // ---------- storage blocked: the pick still lands (it isn't remembered, that's all) ----------
     const blocked = await browser.newContext({ ...devices['Pixel 7'] });
     await withThreeAreas(blocked);
     await blocked.addInitScript(() => {
@@ -152,7 +163,7 @@ const chooserOpen = (page) => page.evaluate(() => document.getElementById('choos
     bp.on('pageerror', (e) => errors.push(e.message));
     await bp.goto(URL);
     await bp.locator('#chooser[open]').waitFor({ timeout: 30_000 });
-    await Promise.all([bp.waitForEvent('load'), bp.locator('#chooserList .area', { hasText: 'Charlotte' }).tap()]);
+    await bp.locator('#chooserList .area', { hasText: 'Charlotte' }).tap();
     await bp.locator('#regionName', { hasText: 'Charlotte' }).waitFor({ state: 'attached', timeout: 30_000 });
     check('with storage blocked, picking an area still opens it', true);
     await blocked.close();

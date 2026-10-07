@@ -4,6 +4,12 @@
 //
 //   npm run fetch-basemap -w @flockwatch/web [-- --region dallas] [-- --build 20261002] [-- --force]
 //   npm run fetch-basemap -w @flockwatch/web -- --assets-only      # just the fonts and sprites
+//   npm run fetch-basemap -w @flockwatch/web -- --us [--outline lower48.geojson]
+//
+// --us cuts the whole lower 48 at zoom 15 instead (the outline comes from `python -m
+// pipeline.us_outline`): data/basemap/us.pmtiles, about 16 GB, which the app uses for every area.
+// The monthly build makes it on GitHub (.github/workflows/build-data.yml); there's no need to
+// fetch it to develop, as a metro extract works the same way for its area.
 //
 // Needs the region's road pack at data/packs/<region>.fwr (its bounding box sets the extract),
 // the pmtiles CLI (https://github.com/protomaps/go-pmtiles) on PATH or unzipped into
@@ -32,6 +38,8 @@ const PAD_DEG = 0.02;
 const arg = (name) => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined);
 const force = process.argv.includes("--force");
 const assetsOnly = process.argv.includes("--assets-only");
+const us = process.argv.includes("--us");
+const OUTLINE = arg("--outline") ?? join(ROOT, "lower48.geojson");
 const MAX_MB = Number(arg("--max-mb") ?? 150);
 
 function run(cmd, args) {
@@ -66,9 +74,22 @@ function download(url, path) {
 
 const local = join(ROOT, "tools", "pmtiles", process.platform === "win32" ? "pmtiles.exe" : "pmtiles");
 const pmtiles = existsSync(local) ? local : "pmtiles";
-const archive = join(OUT, `${REGION}.pmtiles`);
+const archive = join(OUT, us ? "us.pmtiles" : `${REGION}.pmtiles`);
 
-if (!assetsOnly && (!existsSync(archive) || force)) {
+if (us && !assetsOnly && (!existsSync(archive) || force)) {
+  if (!existsSync(OUTLINE)) throw new Error(`no outline at ${OUTLINE}; run \`python -m pipeline.us_outline\``);
+  mkdirSync(OUT, { recursive: true });
+  const build = arg("--build") ?? latestBuild();
+  const source = `https://build.protomaps.com/${build}.pmtiles`;
+  const partial = `${archive}.partial`;
+  rmSync(partial, { force: true });
+  console.log(`extracting the lower 48 at zoom 15 from ${source}`);
+  // Tens of minutes for some 16 GB: its progress goes straight to the log.
+  const r = spawnSync(pmtiles, ["extract", source, partial, `--region=${OUTLINE}`, "--maxzoom=15", "--download-threads=8"],
+    { stdio: "inherit" });
+  if (r.error || r.status !== 0) throw new Error(`pmtiles extract failed: ${r.error ?? `exit ${r.status}`}`);
+  renameSync(partial, archive);
+} else if (!us && !assetsOnly && (!existsSync(archive) || force)) {
   mkdirSync(OUT, { recursive: true });
   const [w, s, e, n] = packBbox();
   const bbox = [w - PAD_DEG, s - PAD_DEG, e + PAD_DEG, n + PAD_DEG].map((v) => v.toFixed(4)).join(",");

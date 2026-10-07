@@ -2,7 +2,7 @@
 // that picks the area you're in. The app routes one area at a time (its road map lives on the
 // phone), so this is how you get to yours. A location fix is used here and forgotten: only the
 // area's id is passed on.
-import { kmTo, type Manifest, type RegionEntry, regionsContaining } from "./data.ts";
+import { areaMatches, kmTo, type Manifest, type RegionEntry, regionsContaining } from "./data.ts";
 import { LocateError, locate } from "./location.ts";
 
 export type PickHow = "list" | "location";
@@ -14,7 +14,7 @@ export class Chooser {
   private readonly dialog = $<HTMLDialogElement>("chooser");
   private readonly list = $("chooserList");
   private readonly search = $<HTMLInputElement>("chooserSearch");
-  private readonly items: { region: RegionEntry; li: HTMLLIElement; text: string }[] = [];
+  private readonly items: { region: RegionEntry; li: HTMLLIElement }[] = [];
   private required = false;
 
   constructor(private readonly manifest: Manifest, private readonly onPick: (r: RegionEntry, how: PickHow) => void) {
@@ -31,7 +31,7 @@ export class Chooser {
         const li = document.createElement("li");
         li.append(this.button(r));
         ul.append(li);
-        this.items.push({ region: r, li, text: `${r.name} ${r.group} ${r.states.join(" ")}`.toLowerCase() });
+        this.items.push({ region: r, li });
       }
       section.append(h, ul);
       this.list.append(section);
@@ -64,8 +64,10 @@ export class Chooser {
     if (matchMedia("(hover: hover) and (pointer: fine)").matches) this.search.focus();
   }
 
-  close(): void {
-    if (this.required) return;
+  /** `force`: an area's been picked, so even a required chooser can go. */
+  close(force = false): void {
+    if (this.required && !force) return;
+    this.required = false;
     this.dialog.close();
     delete document.documentElement.dataset.chooser;
   }
@@ -86,8 +88,8 @@ export class Chooser {
   }
 
   private filter(): void {
-    const q = this.search.value.trim().toLowerCase();
-    for (const { li, text } of this.items) li.hidden = Boolean(q) && !q.split(/\s+/).every((w) => text.includes(w));
+    const q = this.search.value.trim();
+    for (const { li, region } of this.items) li.hidden = Boolean(q) && !areaMatches(region, q);
     for (const section of this.list.querySelectorAll("section")) {
       section.hidden = [...section.querySelectorAll("li")].every((li) => li.hidden);
     }

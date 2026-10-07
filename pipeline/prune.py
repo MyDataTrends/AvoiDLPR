@@ -46,8 +46,11 @@ def parse_listing(text: str) -> dict[str, dt.datetime | None]:
 
 
 def _paths(manifest: dict) -> set[str]:
-    return {path for r in manifest.get("regions", [])
-            for path in (r["pack"]["path"], r["basemap"]["path"], (r.get("places") or {}).get("path")) if path}
+    paths = {path for r in manifest.get("regions", [])
+             for path in (r["pack"]["path"], r["basemap"]["path"], (r.get("places") or {}).get("path")) if path}
+    if manifest.get("basemap"):  # the country's, named once at the top (and by every region)
+        paths.add(manifest["basemap"]["path"])
+    return paths
 
 
 def stale_keys(manifest: dict, objects: dict[str, dt.datetime | None], *, now: dt.datetime, min_age_hours: float,
