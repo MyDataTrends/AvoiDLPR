@@ -30,6 +30,8 @@ export interface Exposure {
   exit: Float32Array;
   units: Float32Array;
   atEnd: Uint8Array;
+  /** What entering the row's zone costs, in captures: 1, or split with a ring (`withRings`). */
+  weight: Float32Array;
 }
 
 const END_TOLERANCE_M = 0.05;
@@ -112,5 +114,39 @@ export function computeExposure(pack: RoadPack, grid: SegmentGrid, cams: CameraS
     exit: Float32Array.from(rows, (r) => r.exit),
     units: Float32Array.from(rows, (r) => r.units),
     atEnd: Uint8Array.from(rows, (r) => r.atEnd),
+    weight: new Float32Array(rows.length).fill(1),
   };
+}
+
+/**
+ * Zones and their rings (see RINGS) in one table, for the search. A ring's rows are numbered
+ * after the zones' sites (site + nSites), so neither carries over for the other at an
+ * intersection, and weighted so a pass through a zone still costs one capture (`ringWeight`
+ * for its ring, the rest for the zone) and a pass through a ring alone costs `ringWeight`.
+ */
+export function withRings(zones: Exposure, rings: Exposure, nSites: number, ringWeight: number): Exposure {
+  const nEdges = zones.ptr.length - 1;
+  const ptr = new Uint32Array(nEdges + 1);
+  for (let e = 0; e < nEdges; e++) {
+    ptr[e + 1] = ptr[e] + (zones.ptr[e + 1] - zones.ptr[e]) + (rings.ptr[e + 1] - rings.ptr[e]);
+  }
+  const n = ptr[nEdges];
+  const out: Exposure = {
+    params: zones.params, ptr, site: new Uint32Array(n), entry: new Float32Array(n), exit: new Float32Array(n),
+    units: new Float32Array(n), atEnd: new Uint8Array(n), weight: new Float32Array(n),
+  };
+  for (let e = 0; e < nEdges; e++) {
+    let o = ptr[e];
+    for (const [src, offset, weight] of [[zones, 0, 1 - ringWeight], [rings, nSites, ringWeight]] as const) {
+      for (let k = src.ptr[e]; k < src.ptr[e + 1]; k++, o++) {
+        out.site[o] = src.site[k] + offset;
+        out.entry[o] = src.entry[k];
+        out.exit[o] = src.exit[k];
+        out.units[o] = src.units[k];
+        out.atEnd[o] = src.atEnd[k];
+        out.weight[o] = weight;
+      }
+    }
+  }
+  return out;
 }

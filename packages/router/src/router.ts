@@ -1,17 +1,20 @@
 /**
  * Public API: load a road pack and a camera feed, then snap, route and budget.
  *
- *   const router = Router.fromBuffer(packBytes, cameraRecords);
+ *   const router = Router.fromBuffer(packBytes, cameraRecords, { ring: RINGS.default });
  *   const a = router.snap(lon, lat), b = router.snap(lon2, lat2);
  *   router.route(a, b, { lambda: 60 });           // fixed price per capture
  *   router.routeWithinBudget(a, b, { maxExtra: 0.1 }); // fewest captures within +10% time
  *
+ * With a ring (see RINGS), passing through one alone costs RING_WEIGHT of a capture, and a
+ * route's `near` lists the cameras it passes that way.
+ *
  * Everything runs locally: origins and destinations never leave the device.
  */
 
-import { buildCameraSet, type CameraSet } from "./cameras.ts";
-import { computeExposure, type Exposure } from "./exposure.ts";
-import { type Camera, type CameraRecord, captures, PROFILES, type ZoneParams, wrap180 } from "./geo.ts";
+import { buildCameraSet, type CameraSet, ringCameraSet } from "./cameras.ts";
+import { computeExposure, type Exposure, withRings } from "./exposure.ts";
+import { type Camera, type CameraRecord, captures, PROFILES, RING_WEIGHT, type ZoneParams, wrap180 } from "./geo.ts";
 import { SegmentGrid } from "./grid.ts";
 import { decodePack, type RoadPack } from "./pack.ts";
 import { EdgeSearch, type Endpoint, type SearchPath, turnCost } from "./search.ts";
@@ -36,6 +39,8 @@ export interface Route {
   turns: number;
   /** Distinct capture sites logging the route, in the order the vehicle meets them. */
   sites: RouteSite[];
+  /** Sites whose ring the route passes through without entering their zone (none without a ring). */
+  near: RouteSite[];
   edges: number[];
   /** [lon, lat] polyline. */
   coordinates: [number, number][];
@@ -51,7 +56,7 @@ export interface BudgetRoute {
 }
 
 export interface AlternativeRoutes {
-  /** Fastest first; each passes strictly fewer capture sites than the one before. */
+  /** Fastest first; each scores strictly lower (`cameraScore`) than the one before. */
   routes: Route[];
   /** Index of the fewest-site route within the recommended extra time. */
   recommended: number;
@@ -65,6 +70,11 @@ export const SNAP_MAX_M = 600;
 
 const ALTERNATIVE_LAMBDAS = [10, 30, 60, 120, 300, 900, 3000] as const;
 
+/** What a route's cameras cost it, in captures: one per zone it enters, RING_WEIGHT per ring alone. */
+export function cameraScore(r: Pick<Route, "sites" | "near">): number {
+  return r.sites.length + RING_WEIGHT * r.near.length;
+}
+
 /**
  * Choose at most `max` indices of a Pareto-ordered frontier: the first, the last and `must`
  * are kept, and the rest are added greedily, each the point farthest (in time and sites,
@@ -73,8 +83,8 @@ const ALTERNATIVE_LAMBDAS = [10, 30, 60, 120, 300, 900, 3000] as const;
 function spreadOut(frontier: readonly Route[], max: number, must: number): number[] {
   if (frontier.length <= max) return frontier.map((_, i) => i);
   const t0 = frontier[0].timeS, dt = (frontier[frontier.length - 1].timeS - t0) || 1;
-  const s0 = frontier[0].sites.length, ds = (s0 - frontier[frontier.length - 1].sites.length) || 1;
-  const at = (i: number): [number, number] => [(frontier[i].timeS - t0) / dt, (s0 - frontier[i].sites.length) / ds];
+  const s0 = cameraScore(frontier[0]), ds = (s0 - cameraScore(frontier[frontier.length - 1])) || 1;
+  const at = (i: number): [number, number] => [(frontier[i].timeS - t0) / dt, (s0 - cameraScore(frontier[i])) / ds];
   const kept = new Set([0, frontier.length - 1, must]);
   while (kept.size < max) {
     let best = -1, bestGap = -1;
@@ -91,6 +101,8 @@ function spreadOut(frontier: readonly Route[], max: number, must: number): numbe
 
 export interface RouterOptions {
   params?: ZoneParams;
+  /** The ring round each zone where a camera may still see you (RINGS), or none. */
+  ring?: ZoneParams | null;
   /** Ignore heading (every camera sees both directions): for comparison only. */
   omni?: boolean;
 }
@@ -99,8 +111,12 @@ export class Router {
   readonly pack: RoadPack;
   readonly grid: SegmentGrid;
   params: ZoneParams;
+  ring: ZoneParams | null;
   cameras!: CameraSet;
+  /** The zones' exposure; the rings' is `rings`, and the search prices both. */
   exposure!: Exposure;
+  ringCameras: CameraSet | null = null;
+  rings: Exposure | null = null;
   private readonly omni: boolean;
   private search!: EdgeSearch;
 
@@ -108,6 +124,7 @@ export class Router {
     this.pack = pack;
     this.grid = new SegmentGrid(pack);
     this.params = opts.params ?? PROFILES.default;
+    this.ring = opts.ring ?? null;
     this.omni = opts.omni ?? false;
     this.setCameras(records);
   }
@@ -116,13 +133,21 @@ export class Router {
     return new Router(decodePack(buf), records, opts);
   }
 
-  /** Replace the camera feed (hourly refresh, or the user's own report) and recompute exposure. */
-  setCameras(records: readonly CameraRecord[], params: ZoneParams = this.params): void {
+  /**
+   * Replace the camera feed (hourly refresh, or the user's own report), or the zone model, and
+   * recompute exposure.
+   */
+  setCameras(records: readonly CameraRecord[], params: ZoneParams = this.params, ring: ZoneParams | null = this.ring): void {
+    const { pack, grid } = this;
     this.params = params;
-    this.cameras = buildCameraSet(records, this.pack.proj, params, this.omni);
-    this.exposure = computeExposure(this.pack, this.grid, this.cameras, params);
-    if (this.search) this.search.exposure = this.exposure;
-    else this.search = new EdgeSearch(this.pack, this.exposure);
+    this.ring = ring;
+    this.cameras = buildCameraSet(records, pack.proj, params, this.omni);
+    this.exposure = computeExposure(pack, grid, this.cameras, params);
+    this.ringCameras = ring && ringCameraSet(this.cameras, records, pack.proj, ring, this.omni);
+    this.rings = ring && computeExposure(pack, grid, this.ringCameras!, ring);
+    const priced = this.rings ? withRings(this.exposure, this.rings, this.cameras.siteCameras.length, RING_WEIGHT) : this.exposure;
+    if (this.search) this.search.exposure = priced;
+    else this.search = new EdgeSearch(pack, priced);
   }
 
   /**
@@ -161,18 +186,18 @@ export class Router {
     let chosen = fastest, chosenLambda = 0, runs = 1;
     const take = (r: Route | null, lambda: number): Route | null => {
       runs++;
-      if (r && r.timeS <= limit && (r.sites.length < chosen.sites.length
-        || (r.sites.length === chosen.sites.length && r.timeS < chosen.timeS))) {
+      if (r && r.timeS <= limit && (cameraScore(r) < cameraScore(chosen)
+        || (cameraScore(r) === cameraScore(chosen) && r.timeS < chosen.timeS))) {
         chosen = r;
         chosenLambda = lambda;
       }
       return r;
     };
-    if (fastest.sites.length > 0) {
+    if (cameraScore(fastest) > 0) {
       const top = take(this.route(from, to, { lambda: lambdaMax }), lambdaMax);
       if (top && top.timeS > limit) {
         let lo = 1, hi = lambdaMax;
-        for (let i = 0; i < probes && chosen.sites.length > 0; i++) {
+        for (let i = 0; i < probes && cameraScore(chosen) > 0; i++) {
           const mid = Math.sqrt(lo * hi);
           const r = take(this.route(from, to, { lambda: mid }), mid);
           if (r && r.timeS <= limit) lo = mid;
@@ -185,11 +210,11 @@ export class Router {
 
   /**
    * The distinct trade-off options for a trip: routes along its time-vs-cameras frontier,
-   * fastest first, each passing strictly fewer capture sites than the one before and no
-   * more than `maxExtra` slower than the fastest. Found by sweeping the camera price lambda
+   * fastest first, each scoring strictly lower (`cameraScore`: captures, and rings at a share)
+   * than the one before and no more than `maxExtra` slower than the fastest. Found by sweeping the camera price lambda
    * (route time only rises with it), so every option is optimal for some price. At most
    * `max` are returned, spread across the frontier; the fastest and the fewest-camera ones
-   * always survive. `recommended` indexes the option with the fewest sites within
+   * always survive. `recommended` indexes the lowest-scoring option within
    * `recommendedExtra` of the fastest time.
    */
   routeAlternatives(from: Endpoint, to: Endpoint,
@@ -198,7 +223,7 @@ export class Router {
     const { maxExtra = 0.5, recommendedExtra = 0.1, max = 4, lambdas = ALTERNATIVE_LAMBDAS } = opts;
     const fastest = this.route(from, to);
     if (!fastest) return null;
-    if (fastest.sites.length === 0) return { routes: [fastest], recommended: 0, probes: 1 };
+    if (cameraScore(fastest) === 0) return { routes: [fastest], recommended: 0, probes: 1 };
     const limit = fastest.timeS * (1 + maxExtra) + 1e-9;
     const recLimit = fastest.timeS * (1 + recommendedExtra) + 1e-9;
     let probes = 1;
@@ -215,11 +240,11 @@ export class Router {
       else if (!hi) hi = { lambda, route: r };
       if (r.timeS > limit) break;
       pool.push(r);
-      if (r.sites.length === 0) break; // nothing can beat zero
+      if (cameraScore(r) === 0) break; // nothing can beat zero
     }
     // The fixed prices can skip the best route inside the recommendation window: bisect the
     // price within the bracket (geometrically; a price of 0 is the fastest route).
-    if (hi && lo.route.sites.length > 0) {
+    if (hi && cameraScore(lo.route) > 0) {
       let a = Math.max(lo.lambda, 1);
       let b = hi.lambda;
       for (let i = 0; i < 4 && b / a > 1.1; i++) {
@@ -233,10 +258,10 @@ export class Router {
       }
     }
 
-    // Keep only Pareto-optimal routes: slower must buy strictly fewer capture sites.
-    pool.sort((x, y) => x.timeS - y.timeS || x.sites.length - y.sites.length);
+    // Keep only Pareto-optimal routes: slower must buy a strictly lower score.
+    pool.sort((x, y) => x.timeS - y.timeS || cameraScore(x) - cameraScore(y));
     const frontier: Route[] = [];
-    for (const r of pool) if (!frontier.length || r.sites.length < frontier[frontier.length - 1].sites.length) frontier.push(r);
+    for (const r of pool) if (!frontier.length || cameraScore(r) < cameraScore(frontier[frontier.length - 1])) frontier.push(r);
     let pick = 0;
     for (let i = 1; i < frontier.length; i++) if (frontier[i].timeS <= recLimit) pick = i;
     const keep = spreadOut(frontier, max, pick);
@@ -254,17 +279,33 @@ export class Router {
     return [...found];
   }
 
+  /** Sites whose ring holds a vehicle here on this heading, but whose zone doesn't: "may see you". */
+  sitesNearAt(lon: number, lat: number, headingDeg: number): number[] {
+    const { ring, ringCameras } = this;
+    if (!ring || !ringCameras) return [];
+    const { proj } = this.pack;
+    const x = proj.x(lon), y = proj.y(lat);
+    const inZone = new Set(this.sitesCapturingAt(lon, lat, headingDeg));
+    const found = new Set<number>();
+    for (const i of ringCameras.near(x, y, ring.rangeM + ring.epsM)) {
+      const site = ringCameras.siteOf[i];
+      if (!inZone.has(site) && captures(ringCameras.cameras[i], x, y, headingDeg, ring)) found.add(site);
+    }
+    return [...found];
+  }
+
   /** Expanded-edge count of the most recent search (for benchmarks). */
   get lastExpanded(): number {
     return this.search.expanded;
   }
 
   private assemble(path: SearchPath, lambda: number): Route {
-    const { pack, exposure } = this;
+    const { pack, exposure, rings } = this;
     const { edgeGeom, edgeRev, edgeTime, edgeH0, edgeH1, geomLen } = pack;
     const { edges } = path;
     let timeS = 0, distanceM = 0, turns = 0;
-    const span = new Map<number, [number, number]>(); // site -> [first, last] metres along the route
+    // site -> [first, last] metres along the route, in its zone and in its ring
+    const span = new Map<number, [number, number]>(), ringSpan = new Map<number, [number, number]>();
     const coordinates: [number, number][] = [];
     edges.forEach((e, i) => {
       const L = geomLen[edgeGeom[e]];
@@ -275,21 +316,18 @@ export class Router {
         if (Math.abs(wrap180(edgeH0[e] - edgeH1[edges[i - 1]])) > 45) turns++;
       }
       if (L > 0) timeS += edgeTime[e] * ((b - a) / L);
-      for (let k = exposure.ptr[e]; k < exposure.ptr[e + 1]; k++) {
-        if (exposure.entry[k] > b || exposure.exit[k] < a) continue;
-        const from = distanceM + Math.max(exposure.entry[k], a) - a;
-        const to = distanceM + Math.min(exposure.exit[k], b) - a;
-        const seen = span.get(exposure.site[k]);
-        if (seen) seen[1] = Math.max(seen[1], to);
-        else span.set(exposure.site[k], [from, to]);
-      }
+      spans(exposure, e, a, b, distanceM, span);
+      if (rings) spans(rings, e, a, b, distanceM, ringSpan);
       distanceM += b - a;
       this.appendCoordinates(coordinates, edgeGeom[e], edgeRev[e] === 1, a, b);
     });
-    const sites = [...span].sort((x, y) => x[1][0] - y[1][0]).map(([site, [atM, untilM]]) => ({
-      site, atM, untilM, cameras: this.cameras.siteCameras[site].map((c) => this.cameras.cameras[c]),
-    }));
-    return { lambda, cost: path.cost, timeS, distanceM, turns, sites, edges, coordinates };
+    const list = (m: Map<number, [number, number]>): RouteSite[] => [...m].sort((x, y) => x[1][0] - y[1][0])
+      .map(([site, [atM, untilM]]) => ({
+        site, atM, untilM, cameras: this.cameras.siteCameras[site].map((c) => this.cameras.cameras[c]),
+      }));
+    const sites = list(span);
+    const near = list(new Map([...ringSpan].filter(([site]) => !span.has(site))));
+    return { lambda, cost: path.cost, timeS, distanceM, turns, sites, near, edges, coordinates };
   }
 
   /** Append the stretch [a, b] (metres in travel order) of a geometry as lon/lat points. */
@@ -314,5 +352,17 @@ export class Router {
       const last = out[out.length - 1];
       if (!last || last[0] !== p[0] || last[1] !== p[1]) out.push(p);
     }
+  }
+}
+
+/** Record, per site, the stretch of [a, b] on edge e that `ex` logs, `offset` metres into the route. */
+function spans(ex: Exposure, e: number, a: number, b: number, offset: number, into: Map<number, [number, number]>): void {
+  for (let k = ex.ptr[e]; k < ex.ptr[e + 1]; k++) {
+    if (ex.entry[k] > b || ex.exit[k] < a) continue;
+    const from = offset + Math.max(ex.entry[k], a) - a;
+    const to = offset + Math.min(ex.exit[k], b) - a;
+    const seen = into.get(ex.site[k]);
+    if (seen) seen[1] = Math.max(seen[1], to);
+    else into.set(ex.site[k], [from, to]);
   }
 }

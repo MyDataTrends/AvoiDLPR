@@ -5,10 +5,11 @@
  * Moving from edge e onto edge f costs
  *
  *     turn(e, f) + time(f) + lambda * (sites logging f that weren't already holding the
- *                                      vehicle at the end of e)
+ *                                      vehicle at the end of e, each by its weight)
  *
  * so lambda is seconds of driving per avoided capture-site entry, and a zone that spans an
- * intersection is charged once. dist[e] is the cost to reach the END of e. The heuristic is
+ * intersection is charged once. A weight is 1, or split between a zone and its ring
+ * (exposure.ts, `withRings`), so a ring alone costs a share of a capture. dist[e] is the cost to reach the END of e. The heuristic is
  * the straight line from e's end node to the destination at the pack's top speed: admissible
  * and consistent, because every edge takes at least length / maxSpeed and every other term
  * is non-negative. Each edge is therefore settled once, and the first time the queue's
@@ -171,17 +172,17 @@ export class EdgeSearch {
     return { cost: best.cost, edges, startOffset: startOffset(edges[0]), endOffset: best.endOff };
   }
 
-  /** Sites logging edge f anywhere in [a, b] (metres from its start). */
+  /** Sites logging edge f anywhere in [a, b] (metres from its start), by weight. */
   private sitesBetween(f: number, a: number, b: number): number {
-    const { ptr, entry, exit } = this.exposure;
+    const { ptr, entry, exit, weight } = this.exposure;
     let n = 0;
-    for (let k = ptr[f]; k < ptr[f + 1]; k++) if (entry[k] <= b && exit[k] >= a) n++;
+    for (let k = ptr[f]; k < ptr[f + 1]; k++) if (entry[k] <= b && exit[k] >= a) n += weight[k];
     return n;
   }
 
-  /** Sites logging f up to `upTo` metres in, minus those still holding the vehicle as e ends. */
+  /** Sites logging f up to `upTo` metres in, minus those still holding the vehicle as e ends, by weight. */
   private newSites(e: number, f: number, upTo: number): number {
-    const { ptr, site, entry, atEnd } = this.exposure;
+    const { ptr, site, entry, atEnd, weight } = this.exposure;
     let n = 0;
     for (let k = ptr[f]; k < ptr[f + 1]; k++) {
       if (entry[k] > upTo) continue;
@@ -192,7 +193,7 @@ export class EdgeSearch {
           break;
         }
       }
-      if (!carried) n++;
+      if (!carried) n += weight[k];
     }
     return n;
   }

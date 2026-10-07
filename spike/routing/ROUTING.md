@@ -48,6 +48,29 @@ The same `captures(cam, position, heading)` drives live alerts (GPS fix + headin
 (road samples every 5 m), so the two can never disagree. Code:
 [geometry.py](geometry.py).
 
+**Rings: where a camera may still see you** (added in the app, October 2026). The spec above is
+Flock's standard camera. The same company sells long-range, wide-range and zoom (PTZ) cameras
+with no published range, and DeFlock's data doesn't say which model a camera is (its tags are
+direction, manufacturer and operator). Flock also logs a car's make, model, colour, body type and
+features like roof racks and stickers, plate or no plate ("Vehicle Fingerprint"), so an
+oncoming car's front can be logged even in a state without front plates. So each zone gets a
+**ring**: the next profile's sector (strict → default → loose → 150 m, 60°, 25 m, 75°) and the
+`axis` heading test for every brand, Flock included.
+
+- A ring is priced at **w = ¼ of a capture**: entering a zone and its ring costs 1 (the ring w,
+  the zone 1 − w), a ring alone costs w. So a route only detours round a ring when that's nearly
+  free (at λ = 60 s, a 15 s detour), and the options frontier is on the score
+  D(P) + w·(rings passed without their zone).
+- Rings are kept apart from zones in the search (their sites are numbered after the zones'), so a
+  zone and its ring never stand in for each other at an intersection.
+- The app draws rings fainter than zones and says "Near a camera" while in one: after "In a
+  camera zone", before "Camera ahead", and never for a camera whose zone the route enters.
+- On the Dallas example trip, the fewest-cameras option goes from 28 min with no zones to 29
+  min with no zones and no rings; search time is about the same (8 probes against 7).
+
+Code: `RINGS` and `RING_WEIGHT` in `packages/router/src/geo.ts`, `withRings` in
+`packages/router/src/exposure.ts`.
+
 ## 2. Routing formulation
 
 Each directed edge *e* carries a travel time tₑ and an exposure

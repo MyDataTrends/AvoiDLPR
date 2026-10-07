@@ -53,9 +53,13 @@ function resample(coords, stepM) {
     await page.locator('.option').first().tap(); // the fastest: the one with camera zones
     const route = await page.evaluate(() => {
       const r = window.__fw.state.routes[0];
-      return { coords: r.coordinates, sites: r.sites.length };
+      return { coords: r.coordinates, sites: r.sites.length, near: r.near.map((s) => s.atM), lengthM: r.distanceM };
     });
     check('the fastest example route passes camera zones', route.sites > 0, `${route.sites} zones`);
+    // Rings: where a camera may still see you, beyond the zone where it reads plates.
+    const card = await page.locator('.option').first().innerText();
+    check('it also passes cameras that may see it, and its card says so',
+      route.near.length > 0 && card.includes(`near ${route.near.length} camera`), card.replace(/\s+/g, ' '));
 
     const points = resample(route.coords, 25);
     const fix = async ([lon, lat], waitMs = 40) => {
@@ -75,6 +79,7 @@ function resample(coords, stepM) {
       const t = await page.locator('#banner strong').innerText().catch(() => '');
       if (/Camera ahead/.test(t)) seen.add('ahead');
       if (/In a camera zone/.test(t)) seen.add('zone');
+      if (/Near a camera/.test(t)) seen.add('near');
     };
     // The first stretch, with fixes every 25 m.
     const half = Math.floor(points.length / 2);
@@ -84,6 +89,9 @@ function resample(coords, stepM) {
     }
     check('a camera ahead is announced before reaching it', seen.has('ahead'));
     check('the banner says when the car is in a zone', seen.has('zone'));
+    const ringFirstHalf = route.near.some((atM) => atM < route.lengthM * (half / points.length));
+    check('and when it passes through a camera\'s ring: "Near a camera"', !ringFirstHalf || seen.has('near'),
+      ringFirstHalf ? '' : 'no ring in the first half');
     const summary = await page.locator('#summary').innerText();
     check('the summary counts down time, distance and zones', /min · .* · \d+ camera zones? ahead/.test(summary), summary);
     check('following GPS fixes never touches the URL', (await page.evaluate(() => location.hash)) === hashBefore);

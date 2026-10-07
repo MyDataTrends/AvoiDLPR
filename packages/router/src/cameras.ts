@@ -70,6 +70,15 @@ export function buildCameraSet(records: readonly CameraRecord[], proj: LocalProj
   return { cameras, siteOf, siteCameras, near };
 }
 
+/**
+ * The same cameras and sites as `zones` (built from the same records), with a ring's sectors,
+ * seeing either way along their axis: see RINGS.
+ */
+export function ringCameraSet(zones: CameraSet, records: readonly CameraRecord[], proj: LocalProjection, ring: ZoneParams,
+  omni = false): CameraSet {
+  return { ...zones, cameras: records.map((r) => cameraFromRecord(r, proj, ring, omni, true)) };
+}
+
 function key(cx: number, cy: number): string {
   return `${cx},${cy}`;
 }

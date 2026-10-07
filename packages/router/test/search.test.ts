@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { RINGS } from "../src/geo.ts";
+import { cameraScore } from "../src/router.ts";
 import { at, between, GRID_NODES, gridCamera, gridRouter, passes } from "./helpers.ts";
 
 // Residential at 30 km/h: a 200 m block is 24 s. Turns: right 4 s, left 9 s. The grid has a
@@ -112,6 +114,11 @@ describe("avoiding cameras", () => {
     assert.deepEqual(flock.sitesCapturingAt(lon, lat, 180), []);
   });
 
+  it("lists no nearby cameras without a ring", () => {
+    assert.deepEqual(flock.route(at(flock, 21), at(flock, 1))!.near, []);
+    assert.deepEqual(flock.sitesNearAt(...between(6, 11, 50), 180), []);
+  });
+
   it("finds the same optimum as plain Dijkstra for every pair of grid nodes", () => {
     const ids = Object.keys(GRID_NODES).map(Number).filter((n) => n <= 25);
     for (const lambda of [0, 60]) {
@@ -124,5 +131,66 @@ describe("avoiding cameras", () => {
         }
       }
     }
+  });
+});
+
+describe("the ring where a camera may see you", () => {
+  // The same north-facing Flock camera, with the default ring: 100 m, 45 degrees either side,
+  // either way along its axis. Along column 0 it runs from 19.4 m south of node 6 (the 20 m
+  // margin round the pole) to 119.9 m north of it.
+  const ringed = gridRouter([gridCamera(1, 6, "0")], { ring: RINGS.default });
+
+  it("sees the oncoming traffic the zone ignores", () => {
+    const r = ringed.route(at(ringed, 21), at(ringed, 1))!; // southbound, towards the camera
+    assert.equal(r.sites.length, 0);
+    assert.equal(r.near.length, 1);
+    near(r.near[0].atM, 600 - 119.9, 5.5);
+    near(r.near[0].untilM, 600 + 19.4, 5.5);
+  });
+
+  it("charges a pass through a zone and its ring one capture, not more", () => {
+    const r = ringed.route(at(ringed, 1), at(ringed, 21), { lambda: 60 })!;
+    assert.equal(r.sites.length, 1);
+    assert.deepEqual(r.near, []); // the zone's own ring isn't listed again
+    near(r.cost - r.timeS, 60, 1e-6);
+    assert.equal(cameraScore(r), 1);
+  });
+
+  it("charges a ring alone a quarter of a capture", () => {
+    const r = ringed.route(at(ringed, 21), at(ringed, 1), { lambda: 60 })!;
+    near(r.cost - r.timeS, 15, 1e-6);
+    assert.equal(cameraScore(r), 0.25);
+  });
+
+  it("detours round a ring only when that's nearly free", () => {
+    near(ringed.route(at(ringed, 21), at(ringed, 1), { lambda: 60 })!.timeS, 96); // 15 s < a 56 s detour
+    const r = ringed.route(at(ringed, 21), at(ringed, 1), { lambda: 300 })!; // 75 s > 56 s
+    assert.deepEqual(r.near, []);
+    near(r.timeS, 24 + 4 + 96 + 4 + 24);
+  });
+
+  it("offers the ring-free detour as an option, but recommends by extra time", () => {
+    const alt = ringed.routeAlternatives(at(ringed, 21), at(ringed, 1), { maxExtra: 1 })!;
+    assert.deepEqual(alt.routes.map((r) => [r.sites.length, r.near.length]), [[0, 1], [0, 0]]);
+    assert.equal(alt.recommended, 0); // the detour is +58%
+  });
+
+  it("answers the live question for rings: only where the zone doesn't hold the car", () => {
+    const [lon, lat] = between(6, 11, 50);
+    assert.deepEqual(ringed.sitesCapturingAt(lon, lat, 180), []); // oncoming: not the zone...
+    assert.deepEqual(ringed.sitesNearAt(lon, lat, 180), [0]); // ...but the ring
+    assert.deepEqual(ringed.sitesNearAt(lon, lat, 0), []); // northbound it's in the zone itself
+    const [lon2, lat2] = between(6, 11, 100); // past the zone's 61.8 m, inside the ring's 119.9
+    assert.deepEqual(ringed.sitesCapturingAt(lon2, lat2, 0), []);
+    assert.deepEqual(ringed.sitesNearAt(lon2, lat2, 0), [0]);
+  });
+
+  it("changes with the zone model, and goes when the ring does", () => {
+    const r = gridRouter([gridCamera(1, 6, "0")], { ring: RINGS.default });
+    r.setCameras([gridCamera(1, 6, "0")], r.params, RINGS.strict); // 50 m: reaches 62 m north
+    assert.deepEqual(r.sitesNearAt(...between(6, 11, 100), 0), []);
+    r.setCameras([gridCamera(1, 6, "0")], r.params, null);
+    assert.equal(r.rings, null);
+    assert.deepEqual(r.route(at(r, 21), at(r, 1))!.near, []);
   });
 });
