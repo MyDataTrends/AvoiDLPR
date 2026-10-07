@@ -201,7 +201,7 @@ Notes:
 | Workers static files | 25 MiB per file, 20,000 files, requests for static files free | The app is about 2 MB; big files live in R2 |
 | R2 | 10 GB stored, 1M writes and 10M reads a month, **no egress fees** | The data is about 17 GB, most of it the country's basemap, so storage costs about 10 cents a month past the free 10 GB ($0.015 per GB-month); the daily cleanup keeps one copy. The hourly feeds are about 100,000 writes a month. A map tile is one read; rough guess a few hundred per session, so tens of thousands of sessions a month before reads cost anything (about $0.36 per million after). One 16 GB file is too big for Cloudflare's cache (512 MB a file on the free plan), so every tile is a read; split it into smaller pieces if that ever adds up |
 | GitHub Actions | Free for public repositories | An hourly job of about a minute, a nightly road update, and a monthly build of about four hours of runner time (40 minutes on the clock; the search indexes add about a minute an area) |
-| Geofabrik, Protomaps | Free downloads, fair use | The monthly build fetches each state once (about 10 GB) and cuts the country's basemap out of Protomaps' daily planet build (about 17 GB, on the runner's second disk); the nightly update only fetches Geofabrik's daily change files |
+| Geofabrik, Protomaps | Free downloads, fair use | The monthly build fetches each state once (about 10 GB) and cuts the country's basemap out of Protomaps' daily planet build (about 17 GB, in a couple of minutes); the nightly update only fetches Geofabrik's daily change files |
 
 These are from public pricing pages in October 2026 and change; check before relying on them.
 

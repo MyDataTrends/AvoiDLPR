@@ -11,7 +11,7 @@ name: Build map data
 #   plan     checks every region lists the states it reaches into (pipeline/check_regions.py)
 #            and splits the regions into batches of neighbouring states (pipeline/plan.py).
 #   basemap  (full mode) the map of the whole lower 48 at zoom 15, about 16 GB in one file, cut out
-#            of Protomaps' newest planet build on the runner's second disk and uploaded under a new
+#            of Protomaps' newest planet build (in a couple of minutes) and uploaded under a new
 #            content-hashed name. Every region uses it; regions have no basemaps of their own.
 #   build    one job per batch, in parallel. Builds its regions and decides, region by region,
 #            whether the new pack replaces the live one (pipeline/decide.py): unchanged (same
@@ -251,9 +251,9 @@ jobs:
           mkdir -p "$HOME/bin" && tar -xzf pmtiles.tar.gz -C "$HOME/bin" pmtiles
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
-      # 16 GB doesn't fit beside the runner's system; its second disk, /mnt, has the room. The
-      # staged copy is a hard link on the same disk, not a second 16 GB.
-      - name: Work on the second disk
+      # 16 GB, under /mnt: on some runners a second disk, on today's the same one with some 85 GB
+      # free (the step prints both). The staged copy is a hard link, not a second 16 GB.
+      - name: Make room under /mnt
         run: |
           df -h / /mnt
           sudo mkdir -p /mnt/fw/data /mnt/fw/release
