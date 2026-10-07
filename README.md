@@ -9,7 +9,7 @@ phone's browser, installs to your home screen like an app, and never sends your 
 destination or your searches anywhere.
 
 <p align="center">
-  <img src="docs/images/desktop.jpg" width="900" alt="AvoiDLPR on a laptop. A trip across Dallas has four route options, from the fastest (26 minutes, through 6 camera zones) to the one with the fewest cameras (28 minutes, through none). Each camera is drawn on the map as an arrow showing which way it points.">
+  <img src="docs/images/desktop.jpg" width="900" alt="AvoiDLPR on a laptop. A trip across Dallas has four route options in a card over the map, from the fastest (26 minutes, through 6 camera zones) to the one with the fewest cameras (28 minutes, through none). The recommended one, 27 minutes through 1 zone, is selected and drawn in blue. Each camera is drawn on the map as an arrow showing which way it points.">
 </p>
 
 > **Status:** built for 135 US metro areas, from New York to Los Angeles and Charlotte to
@@ -34,11 +34,13 @@ is a good place to learn more.
 ## How it works
 
 <p align="center">
-  <img src="docs/images/phone-search.jpg" width="250" alt="Searching on a phone: the start is 'Your location', and typing 'fair park' as the destination lists Fair Park's station and neighborhood, the Music Hall at Fair Park and other matches, each with what it is, its town and how far away it is.">
+  <img src="docs/images/phone-home.jpg" width="200" alt="The app on a phone: a map of downtown Dallas with a 'Where to?' box and quick searches (a sample trip, gas, coffee) at the top, and a little blue car marking where you are.">
   &nbsp;
-  <img src="docs/images/phone-routes.jpg" width="250" alt="On a phone: the trip's route options in a panel under the map, with the fewest-cameras option selected.">
+  <img src="docs/images/phone-search.jpg" width="200" alt="Searching on a phone: the search fills the screen. The start is 'Your location', and typing 'fair park' as the destination lists Fair Park's station and neighborhood, the Music Hall at Fair Park and other matches, each with what it is, its town and how far away it is.">
   &nbsp;
-  <img src="docs/images/phone-drive.jpg" width="250" alt="Previewing a drive on a phone: a red banner reads 'In a camera zone: Flock Safety, reads plates heading N' as the route passes through a camera's shaded view.">
+  <img src="docs/images/phone-routes.jpg" width="200" alt="On a phone: the trip's route options in a sheet under the map, with the fewest-cameras option (28 minutes, no camera zones) selected and a Start button at the top of the sheet.">
+  &nbsp;
+  <img src="docs/images/phone-drive.jpg" width="200" alt="Previewing the drive on a phone in dark mode: the little car drives the route on a dark map, and a red banner reads 'In a camera zone: Flock Safety, reads plates heading N' as it passes a camera.">
 </p>
 
 1. **A map of the cameras.** Volunteers map ALPRs on OpenStreetMap through
@@ -56,13 +58,18 @@ is a good place to learn more.
 4. **Drive.** Tap **Start** and AvoiDLPR follows your phone's GPS along the route: a warning
    before each camera zone, a banner and a chime while you're in one, and a new route if you
    leave this one. Keep the app open with the screen on; phones pause web apps in the
-   background. (**Preview drive** plays the trip back on the map, to see where the zones are.)
+   background. (**Preview** plays the trip back on the map in about 30 seconds, to see where
+   the zones are.)
 
 AvoiDLPR works one metro area at a time: the first time you open it, it asks where you drive (or
 finds your area from your location) and downloads that area's road map and its list of addresses
 and places, a few megabytes. To plan a trip, type where you're going (an address, a street, or a
 place like a store, a stadium or the airport) or tap it on the map, and start from your current
 location or anywhere else.
+
+It works like the map apps you already know: **Where to?**, pick a route, **Start**. It follows
+your phone's light or dark mode (or pick one in the menu), and you're the little car on the map:
+a hatchback, pickup, van or scooter, your choice.
 
 ## Your privacy
 
@@ -72,7 +79,8 @@ location or anywhere else.
 - **So does search.** Most map apps send everything you type to their servers. AvoiDLPR
   downloads your area's addresses and places once and looks them up on your phone, so what you
   search for stays there too.
-- **No account, no ads, no analytics.** The app remembers which area you picked, on your device.
+- **No account, no ads, no analytics.** The app remembers your area, your ride and light or
+  dark, on your device.
 - Like any online map, it downloads map images for the area on screen. Those come from
   AvoiDLPR's own file host (not Google or Apple) and carry no account or identifier.
 - After the first visit, route planning and search work offline too.
@@ -100,7 +108,7 @@ DeFlock's public camera map.
 
 **How current is the map?** Cameras update hourly. Roads are checked every night: an area's road
 map is replaced when its roads changed noticeably, or weekly for small fixes, so your phone isn't
-downloading it again for every one-street edit. The bottom of the panel shows their dates.
+downloading it again for every one-street edit. The menu shows their dates.
 Addresses and places, for search, are rebuilt monthly.
 
 **Why can't it find an address?** Search knows the addresses and places on OpenStreetMap, which
