@@ -147,13 +147,18 @@ export class Overlays {
     for (const [name, color] of [["fw-cam", c.camera], ["fw-cam-route", c.route], ["fw-cam-avoided", c.avoided]] as const) {
       map.addImage(name, arrow(color, c.halo), { pixelRatio: 2 });
     }
-    for (const id of ["fw-accuracy", "fw-zones", "fw-routes", "fw-cameras"]) {
+    for (const id of ["fw-accuracy", "fw-rings", "fw-zones", "fw-routes", "fw-cameras"]) {
       map.addSource(id, { type: "geojson", data: EMPTY });
     }
 
     map.addLayer({
       id: "fw-accuracy", type: "fill", source: "fw-accuracy",
       paint: { "fill-color": c.accent, "fill-opacity": 0.12, "fill-outline-color": c.accent },
+    });
+    // Under each zone, fainter: its ring, where the camera may still see you.
+    map.addLayer({
+      id: "fw-rings", type: "fill", source: "fw-rings", minzoom: 13,
+      paint: { "fill-color": c.zone, "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.03, 16, 0.08] },
     });
     map.addLayer({
       id: "fw-zones", type: "fill", source: "fw-zones", minzoom: 13,
@@ -212,10 +217,19 @@ export class Overlays {
     });
   }
 
-  setCameras(cameras: readonly CameraDTO[], zone: { rangeM: number }, stateOf: (site: number) => CameraState): void {
+  /** The cameras, their zones and (`ringRangeM` over 0) their rings. */
+  setCameras(cameras: readonly CameraDTO[], zone: { rangeM: number }, stateOf: (site: number) => CameraState,
+    ringRangeM = 0): void {
     const points: Feature<Point>[] = [];
     const zones: Feature[] = [];
+    const rings: Feature[] = [];
     cameras.forEach((c, index) => {
+      if (ringRangeM > 0) {
+        for (const [bearing, halfAngle] of c.ring) {
+          rings.push({ type: "Feature", properties: { site: c.site },
+            geometry: { type: "Polygon", coordinates: [sector(c.lon, c.lat, bearing, halfAngle, ringRangeM)] } });
+        }
+      }
       for (const [bearing, halfAngle] of c.sectors) {
         const properties = { index, site: c.site, mode: c.mode, bearing, on: stateOf(c.site) };
         points.push({ type: "Feature", geometry: { type: "Point", coordinates: [c.lon, c.lat] }, properties });
@@ -227,6 +241,7 @@ export class Overlays {
     });
     this.source("fw-cameras").setData({ type: "FeatureCollection", features: points });
     this.source("fw-zones").setData({ type: "FeatureCollection", features: zones });
+    this.source("fw-rings").setData({ type: "FeatureCollection", features: rings });
   }
 
   /** Draw the route options; the selected one sits on top, the rest stay tappable behind it. */

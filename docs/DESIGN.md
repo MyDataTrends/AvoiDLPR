@@ -66,6 +66,7 @@ Stop take a deeper red (5.5:1).
 | Selected route / other routes | #2563eb / #8d96a0 | #6b9bff / #6c7480 |
 | Camera / on the route / avoided | #495057 / #e03131 / #2f9e44 | #adb5bd / #ff6b6b / #51cf66 |
 | Camera zone fill | #e03131 | #ff6b6b |
+| Ring fill (where a camera may still see you) | The zone colour, fainter: 3–8% opacity against the zone's 8–20% | The same |
 
 ## Layout
 
@@ -91,9 +92,11 @@ route or following your ride always targets the part of the map you can see.
   chip opens the search with its words typed in.
 - **Route option.** A card: the time large, its label beside it (Fastest, Balanced, Fewer cameras,
   Fewest cameras) with a *Recommended* badge, then the extra time and distance, and the
-  camera-zone count on a soft red badge (green for none). The selected card gets a 2 px ink border.
+  camera-zone count on a soft red badge (green for none). Cameras it only passes near (their
+  rings) go in the muted line: "16 mi · near 2 cameras". The selected card gets a 2 px ink border.
 - **Banner.** A pill at the top of the map while previewing or driving: red with white text in a
-  camera zone, amber with dark text for a camera ahead, the canvas colour otherwise.
+  camera zone, cream with dark amber text (the notice colours) near a camera, amber with dark
+  text for a camera ahead, the canvas colour otherwise.
 - **Menu.** A dialog from the round button at the top right, a bottom sheet on phones: your area,
   your ride, Appearance (Auto, Light, Dark), camera alerts (sound, which zone model), install
   help, the map key and where the data comes from.

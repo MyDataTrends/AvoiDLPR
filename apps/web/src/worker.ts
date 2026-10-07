@@ -1,6 +1,6 @@
 // The router lives here, off the main thread: decoding the pack, computing exposure and
 // searching never stall the map. The only thing it fetches is the map data it is told to load.
-import { type CameraRecord, type PackMeta, PROFILES, type Route, Router, SNAP_MAX_M } from "@flockwatch/router";
+import { type CameraRecord, type PackMeta, PROFILES, RINGS, type Route, type RouteSite, Router, SNAP_MAX_M } from "@flockwatch/router";
 
 import { fetchData, fetchOk } from "./fetch-data.ts";
 import type { CameraDTO, ProfileName, Request, Response, RouteDTO } from "./protocol.ts";
@@ -26,19 +26,21 @@ let cams: CameraDTO[] = [];
 let siteIndex = new Map<number, number[]>();
 
 function refreshCameras(r: Router): void {
+  const pairs = (sectors: readonly (readonly [number, number])[]) => sectors.map(([b, h]) => [b, h] as [number, number]);
   cams = r.cameras.cameras.map((c, i) => ({
     osmId: c.osmId, lon: c.lon, lat: c.lat, brand: c.brand, mode: c.mode,
-    sectors: c.sectors.map(([b, h]) => [b, h] as [number, number]), site: r.cameras.siteOf[i],
+    sectors: pairs(c.sectors), ring: pairs(r.ringCameras?.cameras[i].sectors ?? []), site: r.cameras.siteOf[i],
   }));
   siteIndex = new Map(r.cameras.siteCameras.map((m, s) => [s, m]));
 }
 
 function toDTO(r: Route): RouteDTO {
+  const site = (s: RouteSite) => ({
+    site: s.site, atM: s.atM, untilM: s.untilM, cameras: (siteIndex.get(s.site) ?? []).map((i) => cams[i]),
+  });
   return {
     timeS: r.timeS, distanceM: r.distanceM, turns: r.turns, coordinates: r.coordinates,
-    sites: r.sites.map((s) => ({
-      site: s.site, atM: s.atM, untilM: s.untilM, cameras: (siteIndex.get(s.site) ?? []).map((i) => cams[i]),
-    })),
+    sites: r.sites.map(site), near: r.near.map(site),
   };
 }
 
@@ -49,6 +51,7 @@ function ready(r: Router): void {
     type: "ready",
     cameras: cams,
     zone: r.params,
+    ring: r.ring,
     pack: { url: loaded.url, fellBack: loaded.fellBack, failed: loaded.failed },
     stats: {
       nodes: r.pack.nNodes, edges: r.pack.nEdges, cameras: cams.length, sites: r.cameras.siteCameras.length,
@@ -67,7 +70,7 @@ async function fetchFeed(url: string): Promise<Feed> {
 async function openPack(url: string, bytes: number, sha256: string | undefined, params: ProfileName): Promise<Router> {
   const pack = await fetchData(url, bytes, sha256, "road map", (p) => scope.postMessage({ type: "progress", ...p }));
   loaded.packMB = pack.byteLength / 1e6;
-  return Router.fromBuffer(pack, records, { params: PROFILES[params] });
+  return Router.fromBuffer(pack, records, { params: PROFILES[params], ring: RINGS[params] });
 }
 
 scope.onmessage = async (ev) => {
@@ -108,7 +111,7 @@ scope.onmessage = async (ev) => {
       return;
     }
     if (msg.type === "profile") {
-      router.setCameras(records, PROFILES[msg.profile]);
+      router.setCameras(records, PROFILES[msg.profile], RINGS[msg.profile]);
       ready(router);
     } else if (msg.type === "route") {
       // A place found by search can sit back from the road (the middle of a park or an airport),
@@ -134,7 +137,10 @@ scope.onmessage = async (ev) => {
         type: "route", id: msg.id, ms, probes: res.probes, recommended: res.recommended, routes: res.routes.map(toDTO),
       });
     } else if (msg.type === "capturing") {
-      scope.postMessage({ type: "capturing", id: msg.id, sites: router.sitesCapturingAt(msg.lon, msg.lat, msg.heading) });
+      scope.postMessage({
+        type: "capturing", id: msg.id,
+        sites: router.sitesCapturingAt(msg.lon, msg.lat, msg.heading), near: router.sitesNearAt(msg.lon, msg.lat, msg.heading),
+      });
     }
   } catch (err) {
     scope.postMessage({ type: "error", message: err instanceof Error ? err.message : String(err) });

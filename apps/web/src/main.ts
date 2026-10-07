@@ -9,7 +9,7 @@ import {
   dataUrl, inBbox, initialRegion, loadManifest, type RegionEntry, regionLabel, regionsContaining, rememberRegion,
 } from "./data.ts";
 import { type Fix, Polyline } from "./drive.ts";
-import { accuracy, cameraZones, distance, duration, extraTime, siteTitle, watches } from "./format.ts";
+import { accuracy, cameraZones, distance, duration, extraTime, nearCameras, siteTitle, watches } from "./format.ts";
 import { insideBox, LocateError, locate } from "./location.ts";
 import { type BasemapUrls, type CameraState, createMap, mapStyle, Overlays } from "./map.ts";
 import { type Ride, RIDES, rideSvg, savedRide, saveRide } from "./personas.ts";
@@ -141,11 +141,15 @@ interface Following {
   route: RouteDTO;
   lastQuery: number;
   queryId: number;
-  /** Sites the worker's live check says hold the car (position + heading). */
+  /** Sites the worker's live check says hold the car (position + heading)... */
   inZone: number[];
-  /** What the zone banner shows, and until when (performance.now()). */
+  /** ...and those whose ring alone does. */
+  nearLive: number[];
+  /** What the zone banner shows, and until when (performance.now()); the same for a ring. */
   zone: string;
   zoneUntil: number;
+  near: string;
+  nearUntil: number;
   /** Route distance at the previous frame or fix: zones are tested against the whole stretch since. */
   lastDistM: number;
 }
@@ -178,6 +182,8 @@ const state = {
   stats: null as Stats | null,
   cameras: [] as CameraDTO[],
   zoneRangeM: 50,
+  /** The rings' reach, where a camera may still see you (0: none). */
+  ringRangeM: 0,
   from: null as LonLat | null,
   /** Set when `from` came from the device's GPS (it then has an accuracy and no URL entry). */
   fromGps: null as { accuracyM: number } | null,
@@ -400,6 +406,7 @@ worker.onmessage = (ev: MessageEvent<Response>) => {
     state.stats = msg.stats;
     state.cameras = msg.cameras;
     state.zoneRangeM = msg.zone.rangeM;
+    state.ringRangeM = msg.ring?.rangeM ?? 0;
     const s = msg.stats;
     document.documentElement.dataset.ready = "true";
     setStatus(`${s.nodes.toLocaleString()} intersections · ${s.cameras.toLocaleString()} cameras · `
@@ -427,7 +434,10 @@ worker.onmessage = (ev: MessageEvent<Response>) => {
     render();
   } else if (msg.type === "capturing") {
     const following = state.drive ?? state.nav;
-    if (following && msg.id === following.queryId) following.inZone = msg.sites;
+    if (following && msg.id === following.queryId) {
+      following.inZone = msg.sites;
+      following.nearLive = msg.near;
+    }
   } else {
     state.routing = false;
     if (msg.badPack) forgetPack(msg.badPack);
@@ -477,10 +487,13 @@ function render(): void {
 
   const fastest = routes[0];
   $("options").replaceChildren(...routes.map((r, i) => optionCard(r, i, routes.length, fastest)));
-  const n = route.sites.length;
-  $("zones").hidden = n === 0;
-  $("zonesSummary").textContent = `${cameraZones(n)} on this route`;
-  $("alerts").replaceChildren(...route.sites.map((s) => alertItem(s)));
+  const n = route.sites.length, m = route.near.length;
+  $("zones").hidden = n + m === 0;
+  $("zonesSummary").textContent = n
+    ? `${cameraZones(n)} on this route${m ? `, ${nearCameras(m, true)}` : ""}`
+    : `Passes ${nearCameras(m)}`;
+  const items = [...route.sites.map((s) => ({ s, near: false })), ...route.near.map((s) => ({ s, near: true }))];
+  $("alerts").replaceChildren(...items.sort((a, b) => a.s.atM - b.s.atM).map(({ s, near }) => alertItem(s, near)));
 }
 
 /** Idle (nothing planned: the "Where to?" pill) or trip (a destination: the route sheet or card). */
@@ -543,7 +556,7 @@ function renderOverlays(): void {
   const fastest = new Set(routes?.[0].sites.map((s) => s.site));
   const chosen = new Set(selectedRoute()?.sites.map((s) => s.site));
   const stateOf = (site: number): CameraState => (chosen.has(site) ? "route" : fastest.has(site) ? "avoided" : "");
-  overlays?.setCameras(state.cameras, { rangeM: state.zoneRangeM }, stateOf);
+  overlays?.setCameras(state.cameras, { rangeM: state.zoneRangeM }, stateOf, state.ringRangeM);
   overlays?.setRoutes((routes ?? []).map((r, i) => ({ coordinates: r.coordinates, selected: i === state.selected, index: i })));
 }
 
@@ -570,9 +583,13 @@ function optionCard(r: RouteDTO, i: number, n: number, fastest: RouteDTO): HTMLB
     time.append(chip);
   }
   const zones = r.sites.length;
+  // Each part wraps as a whole ("near 4 cameras" never splits).
+  const meta = span("meta", "");
+  const parts = [i > 0 ? extraTime(r.timeS - fastest.timeS) : "", distance(r.distanceM), r.near.length ? nearCameras(r.near.length) : ""];
+  parts.filter(Boolean).forEach((text, k) => meta.append(...(k ? [" · "] : []), span("", text)));
   card.append(
     time,
-    span("meta", [i > 0 ? extraTime(r.timeS - fastest.timeS) : "", distance(r.distanceM)].filter(Boolean).join(" · ")),
+    meta,
     span(zones ? "cams" : "cams none", zones ? cameraZones(zones) : "No camera zones"),
   );
   card.addEventListener("click", () => selectRoute(i));
@@ -618,11 +635,14 @@ function selectRoute(i: number): void {
   render();
 }
 
-function alertItem(site: SiteDTO): HTMLLIElement {
+/** A camera zone on the route, or (`near`) a camera whose ring alone it passes through. */
+function alertItem(site: SiteDTO, near = false): HTMLLIElement {
   const li = document.createElement("li");
+  if (near) li.className = "near";
   const button = document.createElement("button");
   button.type = "button";
-  const parts: [string, string][] = [["dist", distance(site.atM)], ["what", siteTitle(site)], ["how", watches(site.cameras[0])]];
+  const how = near ? "may see you passing" : watches(site.cameras[0]);
+  const parts: [string, string][] = [["dist", distance(site.atM)], ["what", siteTitle(site)], ["how", how]];
   for (const [cls, text] of parts) {
     const span = document.createElement("span");
     span.className = cls;
@@ -642,7 +662,7 @@ function setStatus(text: string): void {
   $("status").textContent = text;
 }
 
-function setBanner(kind: "zone" | "ahead" | "clear" | null, title = "", detail = ""): void {
+function setBanner(kind: "zone" | "ahead" | "near" | "clear" | null, title = "", detail = ""): void {
   const b = $("banner");
   b.hidden = kind === null;
   if (!kind) return;
@@ -694,7 +714,7 @@ function startDrive(): void {
   const speed = Math.min(64, Math.max(4, route.timeS / PREVIEW_S));
   state.drive = {
     line, route, t0: performance.now() + PREVIEW_EASE_MS, speed, raf: 0,
-    lastQuery: 0, queryId: 0, inZone: [], zone: "", zoneUntil: 0, lastDistM: 0,
+    lastQuery: 0, queryId: 0, inZone: [], nearLive: [], zone: "", zoneUntil: 0, near: "", nearUntil: 0, lastDistM: 0,
   };
   document.documentElement.dataset.following = "drive";
   $("drive").textContent = "Stop preview";
@@ -744,8 +764,10 @@ function tick(now: number): void {
 function showDriveBanner(fix: Fix, d: Following, now: number, aheadM = ALERT_AHEAD_M): { kind: string; site: number } {
   // Test each zone interval against the whole stretch driven since the last frame, so a slow
   // frame (or a sparse GPS fix) can't step over a zone. The worker's live check, the same
-  // predicate a phone runs on each fix, backs it up.
-  const onRoute = d.route.sites.find((s) => s.atM <= fix.distM && s.untilM >= d.lastDistM);
+  // predicate a phone runs on each fix, backs it up. Rings the same way, below.
+  const passed = (s: SiteDTO) => s.atM <= fix.distM && s.untilM >= d.lastDistM;
+  const onRoute = d.route.sites.find(passed);
+  const nearRoute = d.route.near.find(passed);
   d.lastDistM = fix.distM;
   const live = state.cameras.filter((c) => d.inZone.includes(c.site));
   if (onRoute || live.length) {
@@ -756,6 +778,18 @@ function showDriveBanner(fix: Fix, d: Following, now: number, aheadM = ALERT_AHE
   if (now < d.zoneUntil) {
     setBanner("zone", "In a camera zone", d.zone);
     return { kind: "zone", site: -1 };
+  }
+  // In a camera's ring: what's happening now comes before a zone ahead. A camera whose zone the
+  // route enters gets "ahead" and "in a zone" instead, not a "near" for the edge of its ring.
+  const zoned = new Set(d.route.sites.map((s) => s.site));
+  const nearLive = state.cameras.filter((c) => d.nearLive.includes(c.site) && !zoned.has(c.site));
+  if (nearRoute || nearLive.length) {
+    d.near = siteTitle({ site: -1, atM: 0, untilM: 0, cameras: nearRoute ? nearRoute.cameras : nearLive });
+    d.nearUntil = now + MIN_ZONE_BANNER_MS;
+  }
+  if (now < d.nearUntil) {
+    setBanner("near", "Near a camera", `${d.near} · it may see you`);
+    return { kind: "near", site: -1 };
   }
   const next = d.route.sites.find((s) => s.atM > fix.distM);
   if (next && next.atM - fix.distM <= aheadM) {
@@ -837,7 +871,8 @@ function startNav(): void {
     audio = null;
   }
   const nav: Nav = {
-    line: routeLine(route), route, lastQuery: 0, queryId: 0, inZone: [], zone: "", zoneUntil: 0, lastDistM: 0,
+    line: routeLine(route), route, lastQuery: 0, queryId: 0, inZone: [], nearLive: [], zone: "", zoneUntil: 0, near: "",
+    nearUntil: 0, lastDistM: 0,
     watchId: 0, offCount: 0, lastReroute: 0, announced: new Set(), shown: "", wake: null, speedMps: 0, at: null,
   };
   state.nav = nav;

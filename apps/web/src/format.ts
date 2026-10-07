@@ -58,6 +58,11 @@ export function cameraZones(n: number): string {
   return `${n} camera zone${n === 1 ? "" : "s"}`;
 }
 
+/** Cameras whose ring (where one may still see you) a route passes: "near 2 cameras", or "near 2 more". */
+export function nearCameras(n: number, more = false): string {
+  return more ? `near ${n} more` : `near ${n} camera${n === 1 ? "" : "s"}`;
+}
+
 /** What a camera watches, in words: Flock reads rear plates of one travel direction. */
 export function watches(c: CameraDTO): string {
   if (c.mode === "any") return "direction unknown";

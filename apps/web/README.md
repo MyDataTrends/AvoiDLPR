@@ -14,15 +14,15 @@ It looks and works like other map apps; [docs/DESIGN.md](../../docs/DESIGN.md) h
   the locate button on the map to start from where you are. A tapped stop is named after the
   nearest address or place. Drag a pin to adjust it, or swap the ends.
 - **Choose a route.** A destination opens the directions: up to four options from fastest to
-  fewest cameras, each with its time, extra time, distance and camera-zone count. "Recommended"
-  is the fewest cameras within 10% more time. Select one from its card, or by tapping its line on
+  fewest cameras, each with its time, extra time, distance, camera-zone count and the cameras it
+  passes near (see **Rings** below). "Recommended" is the fewest cameras within 10% more time. Select one from its card, or by tapping its line on
   the map; a camera it avoids turns green and one it passes turns red.
-- **Read the alerts.** *N camera zones on this route*, under the options, lists them; tap one to
-  fly to it. **Preview** plays the trip back in about 30 seconds with "camera ahead" and "in a
-  camera zone" alerts.
+- **Read the alerts.** *N camera zones on this route*, under the options, lists them and the
+  cameras it passes near; tap one to fly to it. **Preview** plays the trip back in about 30
+  seconds with "camera ahead", "in a camera zone" and "near a camera" alerts.
 - **Drive.** **Start** follows the device's GPS along the route: a warning before each camera
-  zone (earlier at speed), a banner, chime and vibration in one, a new route when you leave this
-  one, and the screen kept awake. Start sits in the sheet's header on a phone, so it's in reach
+  zone (earlier at speed), a banner, chime and vibration in one, a quieter banner near one, a new
+  route when you leave this one, and the screen kept awake. Start sits in the sheet's header on a phone, so it's in reach
   at any height.
 - **Make it yours.** The menu (top right) has your ride (a hatchback, pickup, van or scooter
   that stands for you on the map); Appearance (Auto follows the device, or Light or Dark, the
@@ -186,6 +186,12 @@ is the one you want. `-- --port 5000` changes the port and `-- --no-build` skips
   ride every frame and zoomed out as needed (as far as zoom 13) so the map scrolls under it no
   faster than 200 px a second. Live navigation instead recentres in steps, when you
   near the edge of the view.
+- **Rings.** Round each zone the router keeps a wider ring where a camera may still see you: the
+  next zone model's size, in either direction of travel (`RINGS` in the router; the reasons are
+  in [ROUTING.md](../../spike/routing/ROUTING.md)). A ring alone costs a quarter of a capture, so
+  routes go round one when that's nearly free, and a route's `near` lists the ones it passes.
+  The map draws rings fainter than zones (from zoom 13). The banner order is "In a camera zone",
+  "Near a camera", "Camera ahead", and a camera whose zone the route enters never gets a "near".
 - **Zone alerts during playback** use the zone intervals the router reports (`atM`–`untilM`).
   Each frame is tested against the whole stretch driven since the previous one, so slow frames
   or high playback speeds can't step over a zone. The worker's live position-and-heading check
@@ -210,9 +216,9 @@ and that search talks to nothing but the site. It needs Dallas's search index st
 [`e2e/areas.cjs`](e2e/areas.cjs) (28 checks) covers choosing an area: the first-visit chooser,
 search, picking by list and by location, remembering, trips that leave the area, and storage
 being blocked. It serves its own three-area manifest, so it only needs Dallas staged.
-[`e2e/navigate.cjs`](e2e/navigate.cjs) (15 checks) drives the example trip with fed GPS fixes:
-the camera-ahead and in-zone alerts, going off route and rerouting, arriving, and that no
-position reaches the URL.
+[`e2e/navigate.cjs`](e2e/navigate.cjs) (17 checks) drives the example trip with fed GPS fixes:
+the camera-ahead, in-zone and near-a-camera alerts, the route card's count of cameras it passes
+near, going off route and rerouting, arriving, and that no position reaches the URL.
 
 [`e2e/appearance.cjs`](e2e/appearance.cjs) (14 checks) covers the menu and the look: Auto
 following the device into dark mode with the map switching too, Light and Dark overriding it,

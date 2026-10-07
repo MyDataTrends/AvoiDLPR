@@ -12,6 +12,8 @@ export interface CameraDTO {
   mode: HeadingMode;
   /** [bearing, half-angle] per sector, degrees. */
   sectors: [number, number][];
+  /** The same for its ring, where it may still see you (none without one). */
+  ring: [number, number][];
   site: number;
 }
 
@@ -29,6 +31,8 @@ export interface RouteDTO {
   turns: number;
   coordinates: LonLat[];
   sites: SiteDTO[];
+  /** Cameras whose ring the route passes through without entering their zone. */
+  near: SiteDTO[];
 }
 
 export interface Stats {
@@ -67,11 +71,15 @@ export type Response =
   /** The road pack downloading (bytes so far of `total`), then being unzipped. */
   | { type: "progress"; loaded: number; total: number; unpacking?: boolean }
   /** `pack.fellBack`: the new pack failed and the previous one is in use. */
-  | { type: "ready"; stats: Stats; cameras: CameraDTO[]; zone: ZoneParams; pack: { url: string; fellBack: boolean; failed?: string } }
-  /** `routes` run fastest first, each with strictly fewer camera zones than the last. */
+  | {
+    type: "ready"; stats: Stats; cameras: CameraDTO[]; zone: ZoneParams; ring: ZoneParams | null;
+    pack: { url: string; fellBack: boolean; failed?: string };
+  }
+  /** `routes` run fastest first, each with strictly fewer cameras than the last (zones, then rings). */
   | { type: "route"; id: number; routes: RouteDTO[]; recommended: number; probes: number; ms: number }
   | { type: "noroute"; id: number; reason: string }
-  | { type: "capturing"; id: number; sites: number[] }
+  /** Sites whose zone holds the car here, and those whose ring alone does. */
+  | { type: "capturing"; id: number; sites: number[]; near: number[] }
   /** `badPack`: a road pack that failed its checks, so the cached copy should go. */
   | { type: "error"; message: string; badPack?: string };
 
