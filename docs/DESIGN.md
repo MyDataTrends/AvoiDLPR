@@ -96,6 +96,12 @@ route or following your ride always targets the part of the map you can see.
   Fewest cameras) with a *Recommended* badge, then the extra time and distance, and the
   camera-zone count on a soft red badge (green for none). Cameras it only passes near (their
   rings) go in the muted line: "16 mi · near 2 cameras". The selected card gets a 2 px ink border.
+- **Spot menu.** Holding the map (or right-clicking) opens a small card at the spot, white like
+  the camera popups: what's there as its title (from the search index), then 44 px rows with an
+  icon each: *Directions to here*, *Start from here*, *Add a camera here*, *Report a map problem
+  here*, the reports with a muted second line saying where they go. A tap elsewhere, Escape or its
+  close button closes it. A plain tap on the map sets nothing (except after *Choose on the map*,
+  when a banner says to tap), so panning can't move the trip.
 - **Banner.** A pill at the top of the map while previewing or driving: red with white text in a
   camera zone, cream with dark amber text (the notice colours) near a camera, amber with dark
   text for a camera ahead, the canvas colour otherwise.

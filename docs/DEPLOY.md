@@ -176,8 +176,8 @@ Notes:
 - **Build map data** with "publish" unticked is a dry run: it builds and reports, uploads nothing.
   Its "mode" picks the monthly build (full) or the nightly update (roads).
 - Search indexes are only built by the full build. Until an area has one (a new deployment, or
-  an area whose index failed to build), the app says search isn't ready there yet and map taps
-  still work. To get them sooner than the 3rd, run **Build map data** in full mode.
+  an area whose index failed to build), the app says search isn't ready there yet, and holding
+  a spot on the map still sets a trip. To get them sooner than the 3rd, run **Build map data** in full mode.
 - The nightly update's roads live in GitHub's Actions cache (10 GB a repository; old entries
   are evicted). If they're evicted, the next run downloads those states again.
 - **Measure a US basemap** (Actions tab) dry-runs a basemap of the whole lower 48 at each top zoom

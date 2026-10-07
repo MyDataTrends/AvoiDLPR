@@ -10,6 +10,7 @@ import {
 } from "./data.ts";
 import { type Fix, Polyline } from "./drive.ts";
 import { accuracy, cameraZones, distance, duration, extraTime, nearCameras, siteTitle, watches } from "./format.ts";
+import { onHold } from "./hold.ts";
 import { insideBox, LocateError, locate } from "./location.ts";
 import { type BasemapUrls, type Bbox, type CameraState, createMap, fence, mapStyle, Overlays } from "./map.ts";
 import { type Ride, RIDES, rideSvg, savedRide, saveRide } from "./personas.ts";
@@ -206,8 +207,10 @@ const state = {
   to: null as LonLat | null,
   /** The stops' names, from search or from what's nearest a tap. */
   names: { from: null as Named | null, to: null as Named | null },
-  /** Which end the next map tap sets. */
+  /** Which end the trip fills next (and "Choose on the map" sets). */
   target: "from" as Stop,
+  /** Set by "Choose on the map": the next tap on the map sets this end. */
+  picking: null as Stop | null,
   profile: "default" as ProfileName,
   routes: null as RouteDTO[] | null,
   recommended: 0,
@@ -330,6 +333,7 @@ function setStops(p: {
     state.names.to = p.names?.to ?? null;
   }
   nameStops();
+  stopPicking();
   state.target = state.from ? "to" : "from";
   state.fitNext = Boolean(state.from && state.to);
   state.notice = null;
@@ -547,7 +551,7 @@ function summary(): string {
     return `Loading the ${region.name} road map…`;
   }
   if (!state.to) return "Where to?";
-  if (!state.from) return "Choose a start: search, or tap the map";
+  if (!state.from) return "Choose a start: search, or hold the map";
   if (state.routing) return "Finding routes…";
   const route = selectedRoute();
   if (route && state.routes) {
@@ -1303,10 +1307,11 @@ const search = new StopSearch({ from: $<HTMLInputElement>("fromInput"), to: $<HT
     if (r) enterRegion(r, { fit: true });
   },
   label: stopLabel,
-  placeholder: (stop) => (!state.to && stop === "to" ? "Where to?" : state.target === stop ? "Search, or tap the map" : "Search for a place"),
+  placeholder: (stop) => (!state.to && stop === "to" ? "Where to?" : state.target === stop ? "Search, or hold the map" : "Search for a place"),
   here: () => void useMyLocation(),
   focused: (stop) => {
     state.target = stop;
+    stopPicking();
     renderStops();
     searchView(stop);
   },
@@ -1316,8 +1321,10 @@ const search = new StopSearch({ from: $<HTMLInputElement>("fromInput"), to: $<HT
   },
   chooseOnMap: (stop) => {
     state.target = stop;
+    state.picking = stop; // a tap sets it now: it's what was asked for
     renderStops();
     if (sheet.isSheet) sheet.set("peek"); // so the map is there to tap
+    setBanner("clear", stop === "to" ? "Tap where you're going" : "Tap where you're starting", "or hold a spot for more");
   },
   closed: () => searchView(null),
   loaded: (url) => {
@@ -1387,21 +1394,115 @@ map.on("style.load", () => {
 });
 map.on("load", () => syncMapPadding(false));
 
+// A tap: on a camera, its details; on another route's line, that route; after "Choose on the map",
+// that end of the trip. Anywhere else it does nothing, so a finger that lands while panning can't
+// move the trip: holding a spot (or right-clicking it) opens what you can do there.
 map.on("click", (e) => {
+  if (holds.consumeClick()) return; // the end of a hold, not a tap
+  spot?.remove();
+  if (state.picking && !state.nav) {
+    const stop = state.picking;
+    search.dismiss();
+    setStops({ [stop]: [e.lngLat.lng, e.lngLat.lat] }); // outside the area, it offers (or goes to) one that fits
+    return;
+  }
   const camera = overlays?.cameraAt(e.point) ?? null;
   if (camera !== null) {
     showCamera(state.cameras[camera], e.lngLat);
     return;
   }
   const other = nearestOtherRoute(e.point);
-  if (other !== null) {
-    selectRoute(other);
-    return;
-  }
-  if (state.nav) return; // a stray tap mid-drive mustn't end the trip
-  search.dismiss();
-  setStops({ [state.target]: [e.lngLat.lng, e.lngLat.lat] }); // outside the area, it offers (or goes to) one that fits
+  if (other !== null) selectRoute(other);
 });
+
+/** "Choose on the map" is over: a stop was set, or a field took over. */
+function stopPicking(): void {
+  if (!state.picking) return;
+  state.picking = null;
+  if (!state.drive && !state.nav) setBanner(null);
+}
+
+// ---------- holding the map: what you can do at a spot ----------
+
+const SPOT_ICONS = {
+  to: '<path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0113 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>',
+  from: '<circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="7.5"/>',
+  camera: '<path d="M4 8h3l2-2h6l2 2h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+  note: '<path d="M5 3h10l4 4v14H5z"/><path d="M15 3v4h4M8 12h8M8 16h5"/>',
+} as const;
+
+let spot: Popup | null = null;
+const holds = onHold(map, (at) => openSpot(at.lng, at.lat));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") spot?.remove();
+});
+
+/**
+ * A held (or right-clicked) spot's menu: go there, start there, or tell the map's makers about it.
+ * The two reports open OpenStreetMap at the spot in a new tab, the spot in the link's #, which the
+ * browser keeps to itself. Cameras added there reach DeFlock's map, and this app's, within the hour.
+ */
+function openSpot(lon: number, lat: number): void {
+  spot?.remove();
+  const box = document.createElement("div");
+  box.className = "spot-menu";
+  const title = document.createElement("strong");
+  title.className = "spot-title";
+  title.textContent = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+  void search.nearest([lon, lat]).then((r) => {
+    if (r) title.textContent = (r.distanceM ?? 0) < 25 ? r.name : `Near ${r.name}`;
+  });
+  const row = (el: HTMLElement, icon: keyof typeof SPOT_ICONS, label: string, detail = "") => {
+    el.className = "spot-item";
+    el.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${SPOT_ICONS[icon]}</svg>`; // trusted markup
+    const name = document.createElement("span");
+    name.textContent = label;
+    el.append(name);
+    if (detail) {
+      const small = document.createElement("span");
+      small.className = "spot-detail";
+      small.textContent = detail;
+      el.append(small);
+    }
+    return el;
+  };
+  const act = (icon: keyof typeof SPOT_ICONS, label: string, run: () => void) => {
+    const b = row(document.createElement("button"), icon, label);
+    (b as HTMLButtonElement).type = "button";
+    b.addEventListener("click", () => {
+      spot?.remove();
+      run();
+    });
+    return b;
+  };
+  const link = (icon: keyof typeof SPOT_ICONS, label: string, detail: string, href: string) => {
+    const a = row(document.createElement("a"), icon, label, detail) as HTMLAnchorElement;
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.addEventListener("click", () => spot?.remove());
+    return a;
+  };
+  const at = `19/${lat.toFixed(6)}/${lon.toFixed(6)}`;
+  const guide = document.createElement("p");
+  guide.className = "spot-guide";
+  guide.innerHTML = 'New to adding cameras? <a href="https://deflock.org/report/id" target="_blank" rel="noopener noreferrer">DeFlock\'s guide</a>';
+  box.append(
+    title,
+    act("to", "Directions to here", () => setStops({ to: [lon, lat] })),
+    act("from", "Start from here", () => setStops({ from: [lon, lat] })),
+    link("camera", "Add a camera here", "In OpenStreetMap's editor, where DeFlock's map comes from",
+      `https://www.openstreetmap.org/edit#map=${at}`),
+    link("note", "Report a map problem here", "A missing address or a wrong road, as a note for mappers",
+      `https://www.openstreetmap.org/note/new#map=${at}`),
+    guide,
+  );
+  // Closed by a tap elsewhere (the click handler), Escape or its own button: not by the click that
+  // ends the very hold that opened it.
+  spot = new Popup({ closeButton: true, closeOnClick: false, maxWidth: "300px", className: "spot-popup", focusAfterOpen: false })
+    .setLngLat([lon, lat]).setDOMContent(box).addTo(map);
+  navigator.vibrate?.(12); // a nudge that the hold took, where phones can
+}
 
 // ---------- areas load as you go (with the country's basemap) ----------
 //

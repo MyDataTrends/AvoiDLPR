@@ -47,6 +47,16 @@ const area = (page, name) => page.waitForFunction((n) => document.getElementById
 /** Set once the page is up: a reload would lose it. */
 const mark = (page) => page.evaluate(() => void (window.__sameVisit = true));
 const sameVisit = (page) => page.evaluate(() => window.__sameVisit === true);
+/** Hold a finger on the map at a screen point, through the browser's own touch input, then pick
+ *  a line of the spot's menu. */
+async function holdAndPick(page, { x, y }, item) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+  await page.waitForTimeout(700);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.locator('.spot-menu button', { hasText: item }).tap();
+}
+
 
 (async () => {
   const errors = [];
@@ -111,15 +121,13 @@ const sameVisit = (page) => page.evaluate(() => window.__sameVisit === true);
     await mark(page);
     await page.locator('#mapLocate').tap();
     await page.waitForFunction(() => document.getElementById('fromInput').value.startsWith('Your location'), null, { timeout: 15_000 });
-    const tap = async (lon, lat) => {
-      const p = await page.evaluate(([x, y]) => window.__fw.map.project([x, y]), [lon, lat]);
-      await page.touchscreen.tap(p.x, p.y);
-    };
-    check('with a start, map taps set the destination', (await page.locator('#targetTo').getAttribute('data-target')) === 'true');
+    check('with a start, the destination is next', (await page.locator('#targetTo').getAttribute('data-target')) === 'true');
     const [w, s, , n] = await page.evaluate(() => window.__fw.state.stats.bbox);
     await page.evaluate(([lon, lat]) => window.__fw.map.jumpTo({ center: [lon, lat], zoom: 9 }), [w, (s + n) / 2]);
     await page.waitForTimeout(400);
-    await tap(w - 0.1, (s + n) / 2); // west of Dallas: inside the made-up Fort Worth area
+    // West of Dallas: inside the made-up Fort Worth area.
+    const west = await page.evaluate(([x, y]) => window.__fw.map.project([x, y]), [w - 0.1, (s + n) / 2]);
+    await holdAndPick(page, west, 'Directions to here');
     await page.locator('#noticeAction').waitFor({ timeout: 10_000 });
     check('a trip leaving the area offers the area that holds it',
       /fits in Fort Worth/.test(await page.locator('#notice').innerText()) && /Fort Worth/.test(await page.locator('#noticeAction').innerText()),

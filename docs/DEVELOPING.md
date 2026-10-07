@@ -46,7 +46,8 @@ npm run phone -w @flockwatch/web                      # serve to your phone over
 The browser tests in `apps/web/e2e/` run with Playwright against the dev server and the staged
 release: `phone-and-location.cjs` (layout, route options, GPS start, preview), `appearance.cjs`
 (the menu: dark mode, your ride, quick searches), `areas.cjs` (the area chooser and switching),
-`nationwide.cjs` (the map of the whole country, and areas loading as you go), `search.cjs` (places, addresses, streets and coordinates in the From
+`nationwide.cjs` (the map of the whole country, and areas loading as you go), `hold.cjs`
+(holding the map: the spot menu, and taps that no longer move the trip), `search.cjs` (places, addresses, streets and coordinates in the From
 and To fields; it needs Dallas's search index staged), `navigate.cjs` (live navigation, fed GPS
 fixes), `updates.cjs` (a damaged pack falls back to the last good one; updates go in between
 trips; new cameras apply at once) and `production.cjs` (the production build: headers, CSP, the

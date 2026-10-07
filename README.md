@@ -67,8 +67,10 @@ is a good place to learn more.
 The map covers the whole lower 48, and routing works in 135 metro areas, one at a time. Zoom in on
 yours, search for it by name, or tap the locate button, and that area's road map and its list of
 addresses and places download, a few megabytes. To plan a trip, type where you're going (an
-address, a street, or a place like a store, a stadium or the airport) or tap it on the map, and
-start from your current location or anywhere else.
+address, a street, or a place like a store, a stadium or the airport) or hold your finger on the
+spot on the map (right-click on a computer) and choose **Directions to here**. Start from your
+current location or anywhere else. A plain tap on the map doesn't change your trip, so panning
+around can't move it by accident.
 
 It works like the map apps you already know: **Where to?**, pick a route, **Start**. It follows
 your phone's light or dark mode (or pick one in the menu), and you're the little car on the map:
@@ -93,7 +95,11 @@ a hatchback, pickup, van or scooter, your choice.
 The map is only as good as the volunteers who build it, and plenty of cameras aren't on it yet.
 If you know of one that's missing, or one that's wrong, add or fix it on
 [DeFlock](https://deflock.org). AvoiDLPR picks up the change within the hour after DeFlock
-publishes it. Every camera in the app links to its OpenStreetMap entry.
+publishes it. In the app, hold the spot on the map and choose **Add a camera here**: it opens
+OpenStreetMap's editor right there (DeFlock's map is built from OpenStreetMap, and DeFlock has
+[a guide](https://deflock.org/report/id)). **Report a map problem here** leaves a note for
+mappers, about a missing address, say, with no account needed. Every camera in the app links to
+its OpenStreetMap entry.
 
 ## Questions
 

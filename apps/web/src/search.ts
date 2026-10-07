@@ -36,7 +36,7 @@ export interface SearchHooks {
   /** What a field shows when nobody's typing in it ("Bean There", "Your location · ±25 m"). */
   label(stop: Stop): string;
   placeholder(stop: Stop): string;
-  /** A field took focus: map taps set its stop now. */
+  /** A field took focus: it's the end "Choose on the map" would set now. */
   focused(stop: Stop): void;
   picked(stop: Stop, result: PlaceResult): void;
   /** "Choose on the map": get the map in view to tap. */
@@ -297,7 +297,7 @@ export class StopSearch {
     if (q && this.hooks.area() === null) {
       if (!areas.length) note = `No area AvoiDLPR covers is called “${q}”. Zoom in on the map instead.`;
     } else if (q && this.status !== "ready") {
-      note = !this.file ? "Search isn't ready for this area yet: tap the map instead."
+      note = !this.file ? "Search isn't ready for this area yet: hold the map instead."
         : this.status === "failed" ? `Search couldn't load (${this.failure}). Tap the map instead.`
           : `Loading the search for this area…${this.progress ? ` ${this.progress}` : ""}`;
     } else if (q && !found.length && !areas.length) {

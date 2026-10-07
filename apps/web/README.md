@@ -12,9 +12,10 @@ It looks and works like other map apps; [docs/DESIGN.md](../../docs/DESIGN.md) h
 - **Where to?** With nothing planned, the app is the map, a **Where to?** box and quick searches
   (gas, coffee, groceries, food, and a sample trip). The From and To fields are search boxes:
   type an address, a street, a place (a store, a stadium, the airport) or coordinates, and pick
-  from the results; the start's list offers **Your location** first. Or tap the map, which sets
-  the field used last ("Choose on the map" from the results lowers the sheet for it), or press
-  the locate button on the map to start from where you are. A tapped stop is named after the
+  from the results; the start's list offers **Your location** first. Or hold a spot on the map
+  (right-click on a computer) and choose **Directions to here** or **Start from here**, or press
+  the locate button on the map to start from where you are. "Choose on the map" in the results
+  lowers the sheet and lets one tap set that field. A stop set on the map is named after the
   nearest address or place. Drag a pin to adjust it, or swap the ends.
 - **Choose a route.** A destination opens the directions: up to four options from fastest to
   fewest cameras, each with its time, extra time, distance, camera-zone count and the cameras it
@@ -175,8 +176,15 @@ is the one you want. `-- --port 5000` changes the port and `-- --no-build` skips
 - **Route options** come from the router's time-vs-cameras frontier (a sweep of camera prices,
   plus a bisection inside the 10% window for the recommendation), capped at +50% time.
 - **Taps on the map**: a camera opens its details; another route's line selects that route (the
-  nearest line wins where options share a road); anything else sets the active end of the trip.
-  A pin outside the area offers the neighbouring area that holds the whole trip, if one does.
+  nearest line wins where options share a road); anything else does nothing, unless "Choose on
+  the map" asked for one, so a finger that lands while panning can't move the trip. A pin
+  outside the area offers the neighbouring area that holds the whole trip, if one does.
+- **Holding the map** (half a second without moving, [`src/hold.ts`](src/hold.ts)) or
+  right-clicking opens the spot's menu: **Directions to here**, **Start from here**, **Add a
+  camera here** (OpenStreetMap's editor at the spot, with DeFlock's guide linked) and **Report a
+  map problem here** (an OpenStreetMap note at the spot, no account needed). The two reports open
+  in a new tab with the spot in the link's #, which browsers don't send to the server. A pan or
+  a pinch cancels a hold; the map moving by itself (following you) doesn't.
 - **Search** ranks by how well the words match, how notable a place is (an airport above a shop)
   and how near it is to the middle of the map. A place found by search may sit back from the road
   (the middle of a park or an airport), so routing looks up to 2.5 km for a road there, against
@@ -236,6 +244,11 @@ near, going off route and rerouting, arriving, and that no position reaches the 
 following the device into dark mode with the map switching too, Light and Dark overriding it,
 the overlays coming back after a style switch, picking a ride and seeing it on the map, both
 remembered, the quick searches, and "Your location" for the start.
+
+[`e2e/hold.cjs`](e2e/hold.cjs) (19 checks) covers holding the map with real touch input: taps and
+pans leave the trip alone; a hold opens the spot's menu, named after what's there; each line does
+what it says (the reports at the spot, in a new tab); "Choose on the map" takes one tap; and on a
+computer a right-click or a held mouse button opens the same menu.
 
 [`e2e/updates.cjs`](e2e/updates.cjs) (14 checks) covers taking updates: a damaged new pack
 falling back to the last good one, a new pack found on return swapped in between trips but not
