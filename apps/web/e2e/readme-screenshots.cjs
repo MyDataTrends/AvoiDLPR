@@ -1,15 +1,16 @@
 // Takes the screenshots in the README (docs/images/) from the dev server on :5173, using a search
-// and the example trip. With the playwright skill, from the repository root:
+// and the example trip, the drive in dark mode. With the playwright skill, from the repository root:
 //   node ~/.claude/skills/playwright-skill/run.js apps/web/e2e/readme-screenshots.cjs
 const path = require('node:path');
 const { chromium, devices } = require('playwright');
 
 const URL = 'http://localhost:5173/';
 const OUT = path.resolve(process.env.README_SHOTS_DIR || 'docs/images');
-const DALLAS_DOWNTOWN = { latitude: 32.7767, longitude: -96.797, accuracy: 25 };
+// A block from the city centre, so your ride isn't parked on the "Dallas" label.
+const DALLAS_DOWNTOWN = { latitude: 32.7776, longitude: -96.7982, accuracy: 25 };
 
 async function ready(page) {
-  await page.getByText('network loaded').waitFor({ timeout: 90_000 });
+  await page.waitForFunction(() => document.documentElement.dataset.ready === 'true', null, { timeout: 90_000 });
   // The search index too: tapped stops are named after it.
   await page.waitForFunction(() => window.__fw?.map.loaded() && window.__fw.search.ready, null, { timeout: 90_000 });
 }
@@ -34,9 +35,12 @@ async function shot(page, name) {
     await page.goto(URL);
     await ready(page);
 
-    // Searching for a destination, from where you are.
+    // Home: the map around you, your ride standing for you, and "Where to?".
     await page.locator('#mapLocate').tap();
     await page.waitForFunction(() => document.getElementById('fromInput').value.startsWith('Your location'));
+    await shot(page, 'phone-home.jpg');
+
+    // Searching for a destination, from where you are.
     await page.locator('#toInput').tap();
     await page.locator('#toInput').fill('fair park');
     await page.locator('#suggestions .suggest-name', { hasText: 'Music Hall' }).waitFor();
@@ -44,30 +48,39 @@ async function shot(page, name) {
     await page.keyboard.press('Escape');
 
     // Route options for the example trip, with the fewest-cameras option selected.
-    await page.getByRole('button', { name: 'Try an example trip' }).tap();
+    await page.locator('#example').tap();
     await page.locator('.option').first().waitFor();
     await page.locator('.option').last().tap();
     // Selecting scrolls the sheet to the option; show the list from the top (fastest first).
     await page.evaluate(() => { for (const el of document.querySelectorAll('#panel, #panel *')) el.scrollTop = 0; });
     await shot(page, 'phone-routes.jpg');
-
-    // Driving the recommended route: the alert banner as it enters a camera's zone.
-    await page.locator('button.option').filter({ has: page.locator('.chip') }).tap();
-    await page.locator('#speed').selectOption('32');
-    await page.locator('#drive').scrollIntoViewIfNeeded();
-    await page.locator('#drive').tap();
-    await page.locator('#banner').filter({ hasText: 'In a camera zone' }).waitFor({ timeout: 90_000 });
-    await page.waitForTimeout(300);
-    await page.screenshot({ path: path.join(OUT, 'phone-drive.jpg'), type: 'jpeg', quality: 82 });
-    console.log('wrote', path.join(OUT, 'phone-drive.jpg'));
     await phone.close();
 
-    // Desktop: the sidebar with the options and the map.
+    // Previewing the recommended route on a phone set to dark mode: the alert banner as it enters
+    // a camera's zone.
+    const night = await browser.newContext({
+      ...devices['Pixel 7'], deviceScaleFactor: 2, colorScheme: 'dark', geolocation: DALLAS_DOWNTOWN, permissions: ['geolocation'],
+    });
+    const dark = await night.newPage();
+    await dark.goto(URL);
+    await ready(dark);
+    await dark.locator('#example').tap();
+    await dark.locator('.option').first().waitFor();
+    await dark.locator('button.option').filter({ has: dark.locator('.chip') }).tap();
+    await dark.locator('#drive').scrollIntoViewIfNeeded();
+    await dark.locator('#drive').tap();
+    await dark.locator('#banner').filter({ hasText: 'In a camera zone' }).waitFor({ timeout: 90_000 });
+    await dark.waitForTimeout(300);
+    await dark.screenshot({ path: path.join(OUT, 'phone-drive.jpg'), type: 'jpeg', quality: 82 });
+    console.log('wrote', path.join(OUT, 'phone-drive.jpg'));
+    await night.close();
+
+    // Desktop: the options in a card over the map.
     const desk = await browser.newContext({ viewport: { width: 1280, height: 760 }, deviceScaleFactor: 1.5 });
     const dk = await desk.newPage();
     await dk.goto(URL);
     await ready(dk);
-    await dk.getByRole('button', { name: 'Try an example trip' }).click();
+    await dk.locator('#example').click();
     await dk.locator('.option').first().waitFor();
     await shot(dk, 'desktop.jpg');
     await desk.close();

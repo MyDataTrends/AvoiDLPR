@@ -43,7 +43,8 @@ export interface RegionEntry {
 export interface Manifest {
   schema: number;
   generated_at: string;
-  assets: { glyphs: string; sprite: string };
+  /** `sprite_dark`: the dark map's icons, in releases made since dark mode. */
+  assets: { glyphs: string; sprite: string; sprite_dark?: string };
   regions: RegionEntry[];
 }
 

@@ -25,7 +25,8 @@ const OUT = join(ROOT, "data", "basemap");
 const ASSETS_URL = "https://protomaps.github.io/basemaps-assets";
 const FONTS = ["Noto Sans Regular", "Noto Sans Medium", "Noto Sans Italic"];
 const GLYPH_RANGES = ["0-255", "256-511", "8192-8447"]; // Latin, Latin extended, punctuation
-const SPRITES = ["light.json", "light.png", "light@2x.json", "light@2x.png"];
+// The light and dark icon sets: the app follows the device into dark mode, map and all.
+const SPRITES = ["light", "dark"].flatMap((flavor) => [".json", ".png", "@2x.json", "@2x.png"].map((ext) => `${flavor}${ext}`));
 const PAD_DEG = 0.02;
 
 const arg = (name) => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined);

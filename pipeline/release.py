@@ -47,6 +47,7 @@ HASH_CHARS = 10
 ASSETS = {
     "glyphs": "basemap/assets/fonts/{fontstack}/{range}.pbf",
     "sprite": "basemap/assets/sprites/v4/light",
+    "sprite_dark": "basemap/assets/sprites/v4/dark",
 }
 
 
@@ -226,9 +227,17 @@ def assemble(out: Path, regions: list[Region], fresh: list[dict], live: dict | N
     return {
         "schema": SCHEMA,
         "generated_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
-        "assets": ASSETS,
+        "assets": asset_paths(out),
         "regions": entries,
     }
+
+
+def asset_paths(out: Path) -> dict:
+    """The manifest's `assets`, the dark map's icons only once they're staged: an asset folder
+    fetched before dark mode doesn't have them, and the app then uses the light ones."""
+    if (out / f"{ASSETS['sprite_dark']}.json").exists():
+        return ASSETS
+    return {k: v for k, v in ASSETS.items() if k != "sprite_dark"}
 
 
 def same_manifest(a: dict | None, b: dict | None) -> bool:

@@ -240,7 +240,8 @@ fresh downloads, new basemaps, and a correction for anything the nightly updates
    again) and the app routes on the last good one, saying so. An app left open, or kept in memory
    as an installed app, looks for news whenever it comes back on screen and every half hour:
    new cameras apply at once, and a new pack, search index or basemap waits until no trip is
-   being driven or previewed. The panel's footer says how current the roads and cameras are.
+   being driven or previewed. *About the data*, in the app's menu, says how current the roads and
+   cameras are.
 
 ## Security and privacy posture
 

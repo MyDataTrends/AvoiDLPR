@@ -1,5 +1,5 @@
-// End-to-end check of the FlockWatch web demo: phone layout, route options, current location,
-// drive preview and the desktop sidebar. It needs the dev server on :5173 (the page exposes
+// End-to-end check of the AvoiDLPR web app: phone layout, route options, current location,
+// drive preview and the desktop card. It needs the dev server on :5173 (the page exposes
 // window.__fw in dev builds only) and Playwright with Chromium. With the playwright skill:
 //   node ~/.claude/skills/playwright-skill/run.js apps/web/e2e/phone-and-location.cjs
 // Screenshots land in PW_ARTIFACT_DIR (default: the OS temp directory).
@@ -50,31 +50,38 @@ async function open(page, sink, url) {
 }
 
 async function ready(page) {
-  await page.getByText('network loaded').waitFor({ timeout: 90_000 });
+  await page.waitForFunction(() => document.documentElement.dataset.ready === 'true', null, { timeout: 90_000 });
   await page.waitForFunction(() => window.__fw?.map.loaded(), null, { timeout: 90_000 });
 }
 
 const settled = (page) => page.waitForFunction(() => !window.__fw.map.isMoving(), null, { timeout: 15_000 });
 
-// How many route vertices fall outside the part of the map the bottom sheet leaves visible?
+// How many route vertices fall outside the part of the map the panel leaves visible (above the
+// bottom sheet on a phone, right of the card on a wide screen)?
 const hidden = (page) => page.evaluate(() => {
   const { map, state } = window.__fw;
-  const { width } = map.getContainer().getBoundingClientRect();
-  const sheetTop = document.getElementById('panel').getBoundingClientRect().top;
+  const { width, height } = map.getContainer().getBoundingClientRect();
+  const panel = document.getElementById('panel').getBoundingClientRect();
   const mobile = getComputedStyle(document.getElementById('sheetHead')).display !== 'none';
-  const bottom = mobile ? sheetTop : map.getContainer().getBoundingClientRect().height;
+  const left = mobile ? 0 : panel.right, bottom = mobile ? panel.top : height;
   let outside = 0, total = 0;
   for (const r of state.routes) {
     for (const c of r.coordinates) {
       const p = map.project(c);
       total++;
-      if (p.x < -2 || p.x > width + 2 || p.y < 54 || p.y > bottom + 2) outside++;
+      if (p.x < left - 2 || p.x > width + 2 || p.y < 54 || p.y > bottom + 2) outside++;
     }
   }
   return { outside, total };
 });
 const sheetState = (page) => page.evaluate(() => document.documentElement.dataset.sheet);
 const summary = (page) => page.locator('#summary').innerText();
+/** Do the locate button and the map's attribution cover each other? */
+const locateCoversCredits = (page) => page.evaluate(() => {
+  const a = document.querySelector('.maplibregl-ctrl-attrib').getBoundingClientRect();
+  const f = document.getElementById('mapLocate').getBoundingClientRect();
+  return a.left < f.right && f.left < a.right && a.top < f.bottom && f.top < a.bottom;
+});
 
 async function drag(page, selector, dy) {
   const box = await page.locator(selector).boundingBox();
@@ -100,13 +107,16 @@ async function drag(page, selector, dy) {
     await page.goto(URL);
     await ready(page);
     await page.screenshot({ path: path.join(OUT, '01-phone-start.png') });
-    check('phone: panel is a half-open bottom sheet', (await sheetState(page)) === 'half');
-    const geometry = await page.evaluate(() => {
-      const p = document.getElementById('panel').getBoundingClientRect();
-      return { top: p.top, bottom: p.bottom, h: innerHeight, scrollW: document.documentElement.scrollWidth, w: innerWidth };
+    // Nothing planned: the map, a "Where to?" pill at the top, and no sheet.
+    const idle = await page.evaluate(() => {
+      const pill = document.getElementById('toInput').getBoundingClientRect();
+      return { pillTop: Math.round(pill.top), head: getComputedStyle(document.getElementById('sheetHead')).display,
+        placeholder: document.getElementById('toInput').placeholder, scrollW: document.documentElement.scrollWidth, w: innerWidth };
     });
-    check('phone: sheet is anchored to the bottom', Math.abs(geometry.bottom - geometry.h) < 1 && geometry.top > geometry.h * 0.4);
-    check('phone: no horizontal scroll', geometry.scrollW <= geometry.w);
+    check('phone: with nothing planned, a "Where to?" pill floats at the top and there is no sheet',
+      idle.pillTop < 120 && idle.placeholder === 'Where to?' && idle.head === 'none', JSON.stringify(idle));
+    check('phone: no horizontal scroll', idle.scrollW <= idle.w);
+    check('phone: the locate button sits beside the map\'s attribution, not on it', !(await locateCoversCredits(page)));
 
     // The handle is a visual cue: the whole head (handle + summary) is the drag target.
     const tapTargets = await page.evaluate(() => [...document.querySelectorAll('button, select, summary')]
@@ -114,6 +124,17 @@ async function drag(page, selector, dy) {
       .map((el) => ({ id: el.id || el.textContent.trim().slice(0, 24), h: el.getBoundingClientRect().height, w: el.getBoundingClientRect().width }))
       .filter((t) => t.h < 40 && t.w > 0));
     check('phone: visible controls are at least 40 px tall', tapTargets.length === 0, JSON.stringify(tapTargets));
+
+    // A trip: the panel becomes a bottom sheet.
+    await page.locator('#example').tap();
+    await page.locator('.option').first().waitFor();
+    await settled(page);
+    const geometry = await page.evaluate(() => {
+      const p = document.getElementById('panel').getBoundingClientRect();
+      return { top: p.top, bottom: p.bottom, h: innerHeight };
+    });
+    check('phone: with a trip, the panel is a half-open sheet anchored to the bottom',
+      (await sheetState(page)) === 'half' && Math.abs(geometry.bottom - geometry.h) < 1 && geometry.top > geometry.h * 0.4, JSON.stringify(geometry));
     const headH = await page.evaluate(() => document.getElementById('sheetHead').getBoundingClientRect().height);
     check('phone: the drag area (handle + summary) is at least 48 px tall', headH >= 48, `${headH} px`);
     const attrib = await page.evaluate(() => {
@@ -123,10 +144,7 @@ async function drag(page, selector, dy) {
     });
     check('phone: map attribution sits above the sheet, not under it', attrib.bottom <= attrib.sheetTop + 1, JSON.stringify(attrib));
     check('phone: the attribution button is at least 32 px wide', attrib.button >= 32, `${attrib.button} px`);
-
-    await page.getByRole('button', { name: 'Try an example trip' }).tap();
-    await page.locator('.option').first().waitFor();
-    await settled(page);
+    check('phone: above the sheet, the locate button still clears the attribution', !(await locateCoversCredits(page)));
     // Known road points (the example route passes through downtown) for the GPS test below.
     const roadPoints = await page.evaluate(() => window.__fw.state.routes[0].coordinates.filter((_, i) => i % 5 === 0));
     const options = page.locator('.option');
@@ -192,23 +210,33 @@ async function drag(page, selector, dy) {
     await page.locator('#handle').focus();
     await page.keyboard.press('ArrowUp'); // peek -> half
     const chosenSites = await page.evaluate(() => window.__fw.state.routes[window.__fw.state.selected].sites.length);
-    await page.locator('#speed').selectOption('32');
     await page.locator('#drive').scrollIntoViewIfNeeded();
     await page.locator('#drive').tap();
     await page.waitForTimeout(500);
     check('drive: the sheet drops to its peek while driving', (await sheetState(page)) === 'peek');
-    check('drive: the button turns into Stop', (await page.locator('#drive').innerText()) === 'Stop');
+    check('drive: the button turns into Stop preview', (await page.locator('#drive').innerText()) === 'Stop preview');
     if (chosenSites > 0) {
       await page.locator('#banner').filter({ hasText: 'In a camera zone' }).waitFor({ timeout: 70_000 });
       check('drive: entering a zone raises the alert banner', true, await page.locator('#banner').innerText());
+    } else {
+      await page.waitForTimeout(1500);
     }
+    // However quick the playback, your ride stays in view: below the banner, above the sheet.
+    const ride = await page.evaluate(() => {
+      const r = document.querySelector('.persona').getBoundingClientRect();
+      return { top: Math.round(r.top), bottom: Math.round(r.bottom),
+        bannerBottom: Math.round(document.getElementById('banner').getBoundingClientRect().bottom),
+        sheetTop: Math.round(document.getElementById('panel').getBoundingClientRect().top) };
+    });
+    check('drive: your ride stays in view, below the banner and above the sheet',
+      ride.top >= ride.bannerBottom && ride.bottom <= ride.sheetTop, JSON.stringify(ride));
     await page.screenshot({ path: path.join(OUT, '07-phone-drive.png') });
     await page.locator('#handle').tap(); // open the sheet to reach Stop
     await page.locator('#drive').scrollIntoViewIfNeeded();
     await page.locator('#drive').tap();
     await page.waitForTimeout(400);
     check('drive: stopping restores the sheet and clears the banner',
-      (await page.locator('#drive').innerText()) === 'Preview drive' && (await page.locator('#banner').isHidden()));
+      (await page.locator('#drive').innerText()) === 'Preview' && (await page.locator('#banner').isHidden()));
 
     // ---------- current location ----------
     await open(page, sink, URL);
@@ -227,10 +255,12 @@ async function drag(page, selector, dy) {
       const [lon0, lat0] = state.from;
       const metres = ([lon, lat]) => Math.hypot((lon - lon0) * 93_700, (lat - lat0) * 111_200);
       const { width } = map.getContainer().getBoundingClientRect();
-      const visibleBottom = document.getElementById('panel').getBoundingClientRect().top - 40;
+      // Below the pill and its quick searches, clear of the locate button.
+      const visibleTop = document.getElementById('panel').getBoundingClientRect().bottom + 16;
+      const visibleBottom = innerHeight - 110;
       for (const c of pts) {
         const d = metres(c), p = map.project(c);
-        if (d > 300 && d < 1500 && p.x > 30 && p.x < width - 30 && p.y > 100 && p.y < visibleBottom) return { x: p.x, y: p.y, d };
+        if (d > 300 && d < 1500 && p.x > 30 && p.x < width - 70 && p.y > visibleTop && p.y < visibleBottom) return { x: p.x, y: p.y, d };
       }
       return null;
     }, roadPoints);
@@ -256,7 +286,7 @@ async function drag(page, selector, dy) {
     watch(dPage, 'denied', sink);
     await dPage.goto(URL);
     await ready(dPage);
-    await dPage.locator('#locate').tap();
+    await dPage.locator('#mapLocate').tap();
     await dPage.locator('#notice').waitFor({ timeout: 15_000 });
     check('gps: a blocked permission explains how to continue', /blocked|Allow/.test(await dPage.locator('#notice').innerText()), await dPage.locator('#notice').innerText());
     check('gps: a blocked permission leaves the start unset', (await dPage.evaluate(() => window.__fw.state.from)) === null);
@@ -267,7 +297,7 @@ async function drag(page, selector, dy) {
     watch(aPage, 'away', sink);
     await aPage.goto(URL);
     await ready(aPage);
-    await aPage.locator('#locate').tap();
+    await aPage.locator('#mapLocate').tap();
     await aPage.locator('#notice').waitFor({ timeout: 15_000 });
     check('gps: a fix outside the loaded area says so', /outside/.test(await aPage.locator('#notice').innerText()), await aPage.locator('#notice').innerText());
     check('gps: and does not set the start', (await aPage.evaluate(() => window.__fw.state.from)) === null);
@@ -280,14 +310,15 @@ async function drag(page, selector, dy) {
     watch(dk, 'desktop', sink);
     await dk.goto(URL);
     await ready(dk);
-    await dk.getByRole('button', { name: 'Try an example trip' }).click();
+    await dk.locator('#example').click();
     await dk.locator('.option').first().waitFor();
     await settled(dk);
     const sidebar = await dk.evaluate(() => {
       const p = document.getElementById('panel').getBoundingClientRect();
       return { w: p.width, left: p.left, handle: getComputedStyle(document.getElementById('sheetHead')).display };
     });
-    check('desktop: the panel is a left sidebar with no sheet handle', sidebar.left === 0 && sidebar.w === 360 && sidebar.handle === 'none', JSON.stringify(sidebar));
+    check('desktop: the panel is a card floating at the top left, with no sheet handle',
+      sidebar.left === 16 && sidebar.w === 400 && sidebar.handle === 'none', JSON.stringify(sidebar));
     const dn = await dk.locator('.option').count();
     check('desktop: route options appear', dn >= 2, `${dn} options`);
     const framedDesk = await hidden(dk);

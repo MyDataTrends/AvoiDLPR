@@ -117,6 +117,8 @@ def data_dir(tmp_path):
     (data / "packs" / "dallas.cameras.json").write_text(json.dumps({"cameras": [{"id": 1}]}))
     (data / "basemap" / "dallas.pmtiles").write_bytes(b"PMTiles" + bytes(range(200)))
     (data / "basemap" / "assets" / "fonts" / "Noto Sans Regular" / "0-255.pbf").write_bytes(b"glyphs")
+    (data / "basemap" / "assets" / "sprites" / "v4").mkdir(parents=True)
+    (data / "basemap" / "assets" / "sprites" / "v4" / "dark.json").write_text("{}")
     return data
 
 
@@ -138,6 +140,7 @@ def test_stage_release_builds_the_tree_and_manifest(data_dir, tmp_path):
     assert json.loads((out / r["cameras"]["path"]).read_text()) == {"cameras": [{"id": 1}]}
     assert (out / "basemap/assets/fonts/Noto Sans Regular/0-255.pbf").read_bytes() == b"glyphs"
     assert manifest["assets"]["sprite"] == "basemap/assets/sprites/v4/light"
+    assert manifest["assets"]["sprite_dark"] == "basemap/assets/sprites/v4/dark"
     assert len(r["bbox"]) == 4 and len(r["center"]) == 2
     assert r["example"] == {"from": [-96.85692, 32.73077], "to": [-96.66394, 32.85072]}
     assert json.loads((out / "regions.json").read_text()) == manifest
@@ -175,7 +178,8 @@ def test_assemble_keeps_live_regions_that_were_not_rebuilt(tmp_path):
         ("b", "packs/b.new.fwr.gz"),  # rebuilt: the new files
         ("c", "packs/c.new.fwr.gz"),  # new region
     ]  # "d" has no camera feed and "gone" left regions.json: both left out
-    old_schema = assemble(out, regions, [_entry("c")], {"schema": 1, "regions": [_entry("a", "old")]})
+    assert "sprite_dark" not in m["assets"]  # no dark icons staged: the app keeps the light ones
+    old_schema =assemble(out, regions, [_entry("c")], {"schema": 1, "regions": [_entry("a", "old")]})
     assert [e["id"] for e in old_schema["regions"]] == ["c"]  # an older layout isn't reused
     with pytest.raises(RuntimeError, match="nothing to release"):
         assemble(out, regions, [_entry("d")])

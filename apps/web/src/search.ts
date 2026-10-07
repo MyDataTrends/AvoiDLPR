@@ -28,6 +28,8 @@ export interface SearchHooks {
   picked(stop: Stop, result: PlaceResult): void;
   /** "Choose on the map": get the map in view to tap. */
   chooseOnMap(stop: Stop): void;
+  /** "Your location", offered for the start: find it and start there. */
+  here(): void;
   /** Typing ended (the field lost focus). */
   closed(stop: Stop): void;
   loaded(url: string): void;
@@ -37,12 +39,15 @@ export interface SearchHooks {
 /** How long typing has to pause before a search runs, in ms. */
 const DEBOUNCE_MS = 100;
 
-const ICONS: Record<PlaceResult["kind"] | "map", string> = {
+type Option = PlaceResult | "map" | "here";
+
+const ICONS: Record<PlaceResult["kind"] | "map" | "here", string> = {
   address: '<path d="M4 11l8-7 8 7M6 9.5V20h12V9.5"/>',
   street: '<path d="M8 3L5 21M16 3l3 18M12 4v3M12 10.5v3M12 17v3"/>',
   place: '<path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0113 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>',
   coordinates: '<circle cx="12" cy="12" r="6"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>',
   map: '<path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15M15 6v15"/>',
+  here: '<circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="7.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
 };
 
 export class StopSearch {
@@ -58,8 +63,8 @@ export class StopSearch {
   /** What was typed: the field's text once it's been edited, until it closes. */
   private query = "";
   private results: PlaceResult[] = [];
-  /** Options shown (results, then "Choose on the map"), and which one the arrow keys are on. */
-  private options: (PlaceResult | "map")[] = [];
+  /** Options shown ("Your location" for the start, results, then "Choose on the map"), and which one the arrow keys are on. */
+  private options: Option[] = [];
   private active = -1;
   private queryId = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -127,6 +132,17 @@ export class StopSearch {
       input.placeholder = this.hooks.placeholder(stop);
       if (stop !== this.editing) input.value = this.hooks.label(stop);
     }
+  }
+
+  /**
+   * Open a field for typing, with `query` already in it: a quick search ("gas station"). Call it
+   * from a tap, so a phone shows its keyboard.
+   */
+  openFor(stop: Stop, query = ""): void {
+    this.inputs[stop].focus();
+    if (!query) return;
+    this.inputs[stop].value = this.query = query;
+    this.run();
   }
 
   /** Stop editing (a map tap, a route chosen): blur the field, which closes the list. */
@@ -207,7 +223,7 @@ export class StopSearch {
       this.render();
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const pick = this.active >= 0 ? this.active : this.options.findIndex((o) => o !== "map");
+      const pick = this.active >= 0 ? this.active : this.options.findIndex((o) => typeof o !== "string");
       if (pick >= 0) this.choose(pick);
     } else if (e.key === "Escape") {
       e.preventDefault(); // a search field would clear itself as well
@@ -221,6 +237,11 @@ export class StopSearch {
     if (option === "map") {
       this.dismiss();
       this.hooks.chooseOnMap(stop);
+      return;
+    }
+    if (option === "here") {
+      this.dismiss();
+      this.hooks.here();
       return;
     }
     this.hooks.picked(stop, option);
@@ -247,7 +268,8 @@ export class StopSearch {
     }
     const q = this.query.trim();
     const found = this.status === "ready" ? this.results : [this.coordinates()].filter((r): r is PlaceResult => r !== null);
-    this.options = q ? [...found, "map"] : ["map"];
+    // Before anything's typed: "Your location" (for the start) and "Choose on the map".
+    this.options = q ? [...found, "map"] : stop === "from" ? ["here", "map"] : ["map"];
     const items: HTMLElement[] = [];
     let note = "";
     if (q && this.status !== "ready") {
@@ -272,14 +294,14 @@ export class StopSearch {
     }
   }
 
-  private option(option: PlaceResult | "map", i: number): HTMLElement {
+  private option(option: Option, i: number): HTMLElement {
     const li = document.createElement("li");
     li.id = `suggest-${i}`;
     li.className = "suggestion";
     li.setAttribute("role", "option");
     li.setAttribute("aria-selected", String(i === this.active));
     li.dataset.option = String(i);
-    const kind = option === "map" ? "map" : option.kind;
+    const kind = typeof option === "string" ? option : option.kind;
     const icon = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[kind]}</svg>`;
     const name = document.createElement("span");
     name.className = "suggest-name";
@@ -289,6 +311,9 @@ export class StopSearch {
       li.classList.add("suggest-map");
       name.textContent = "Choose on the map";
       detail.textContent = this.editing === "from" ? "Tap where you're starting" : "Tap where you're going";
+    } else if (option === "here") {
+      name.textContent = "Your location";
+      detail.textContent = "Start where you are";
     } else {
       name.textContent = option.name;
       detail.textContent = [option.detail, option.distanceM !== undefined ? distance(option.distanceM) : ""]
