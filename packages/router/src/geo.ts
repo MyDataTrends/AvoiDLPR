@@ -38,6 +38,23 @@ export const PROFILES = {
   loose: { rangeM: 100, halfAngle: 45, epsM: 20, headingTol: 60 },
 } as const satisfies Record<string, ZoneParams>;
 
+/**
+ * The ring round each zone where a camera may still see you: one profile up, and either way
+ * along the camera's axis. It stands for what the zone leaves out. Flock's long-range,
+ * wide-range and zoom (PTZ) cameras reach further than its standard one, with no published
+ * range, and the map data doesn't say which a camera is; oncoming cars show their fronts (a
+ * front plate in many states, and the make, model and colour Flock logs anyway); and mapping
+ * error beyond the zone's own margin.
+ */
+export const RINGS = {
+  strict: PROFILES.default,
+  default: PROFILES.loose,
+  loose: { rangeM: 150, halfAngle: 60, epsM: 25, headingTol: 75 },
+} as const satisfies Record<keyof typeof PROFILES, ZoneParams>;
+
+/** A ring's share of what a capture costs a route: a detour round one has to be nearly free. */
+export const RING_WEIGHT = 0.25;
+
 export type HeadingMode = "rear" | "axis" | "any";
 /** [compass bearing, half-angle] in degrees. */
 export type Sector = readonly [number, number];
@@ -187,16 +204,18 @@ export function captures(cam: Camera, x: number, y: number, heading: number, p: 
 
 /**
  * Flock is modelled rear-only per its spec; other brands' plate side is undocumented, so
- * they get both directions along the axis. `omni` drops heading entirely.
+ * they get both directions along the axis. `omni` drops heading entirely; `bothWays` gives
+ * Flock both directions too (a ring: see RINGS).
  */
-export function cameraFromRecord(rec: CameraRecord, proj: LocalProjection, p: ZoneParams, omni = false): Camera {
+export function cameraFromRecord(rec: CameraRecord, proj: LocalProjection, p: ZoneParams, omni = false,
+  bothWays = false): Camera {
   const tags = rec.tags ?? {};
   const brand = tags.manufacturer || tags.brand || "";
   const dirs = parseDirection(tags.direction || tags["camera:direction"]);
   const base = { osmId: rec.id, lon: rec.lon, lat: rec.lat, x: proj.x(rec.lon), y: proj.y(rec.lat), brand };
   if (!dirs) return { ...base, mode: "any", sectors: [[0, 180]] };
   const sectors = dirs.map(([b, extra]): Sector => [b, Math.min(180, p.halfAngle + extra)]);
-  return { ...base, mode: omni ? "any" : brand.startsWith("Flock") ? "rear" : "axis", sectors };
+  return { ...base, mode: omni ? "any" : brand.startsWith("Flock") && !bothWays ? "rear" : "axis", sectors };
 }
 
 /**

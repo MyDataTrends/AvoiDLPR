@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import type { CameraRecord } from "../src/geo.ts";
 import type { RoadPack } from "../src/pack.ts";
-import { Router } from "../src/router.ts";
+import { Router, type RouterOptions } from "../src/router.ts";
 import type { Endpoint } from "../src/search.ts";
 
 export const FIXTURES = fileURLToPath(new URL("./fixtures/", import.meta.url));
@@ -23,8 +23,8 @@ export const hasDallas = existsSync(`${DATA}packs/dallas.fwr`) && existsSync(`${
 /** The synthetic 5x5 grid: node id = 1 + 5 * row + col, rows south -> north, 200 m blocks. */
 export const GRID_NODES = readJson<{ nodes: Record<string, [number, number]> }>(`${FIXTURES}grid.json`).nodes;
 
-export function gridRouter(cameras: CameraRecord[] = []): Router {
-  return Router.fromBuffer(readArrayBuffer(`${FIXTURES}grid.fwr`), cameras);
+export function gridRouter(cameras: CameraRecord[] = [], opts: RouterOptions = {}): Router {
+  return Router.fromBuffer(readArrayBuffer(`${FIXTURES}grid.fwr`), cameras, opts);
 }
 
 /** Point `metres` of the way from grid node a towards node b. */
