@@ -18,6 +18,7 @@ drops it as incomplete. The monthly full build starts fresh and puts it back.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -32,6 +33,13 @@ Run = Callable[[Sequence[str]], None]
 
 #: How much change to download in one go, in kB (pyosmium's unit): about three days of a big state.
 MAX_DIFF_KB = 1_000_000
+#: Waits (seconds) before asking a replication server for its state again. Geofabrik's doesn't
+#: answer now and then; a couple of minutes sees past that.
+STATE_RETRY_S = (10, 30, 60)
+
+
+class Unreachable(RuntimeError):
+    """A state's replication server didn't answer, even after being asked again."""
 
 
 def slug(path: str) -> str:
@@ -102,21 +110,29 @@ def fresh(path: str, work: Path, run: Run, *, replication: Callable[[Path], dict
 
 
 def update(path: str, work: Path, run: Run, *, server: Callable[[str], ReplicationServer] = ReplicationServer,
-           replication: Callable[[Path], dict | None] = replication_of, rewind: int = 0) -> tuple[dict, bool]:
+           replication: Callable[[Path], dict | None] = replication_of, rewind: int = 0,
+           sleep: Callable[[float], None] = time.sleep) -> tuple[dict, bool]:
     """Bring a state's roads up to date; returns (its replication state, whether anything changed).
 
     Without a cached copy, or one that can't be rolled forward (no replication position, or the
     changes since have been deleted from the server), it starts again from a fresh download.
     `rewind` re-applies that many of the latest change files first: harmless (a change already
     in the file changes nothing), and a way to run the whole path on a day nothing new came out.
+    A server that doesn't say where it's got to is asked again (STATE_RETRY_S), then given up
+    on with Unreachable, the roads left as they were.
     """
     roads, state = roads_file(work, path), read_state(work, path)
     if not roads.exists() or not state or not state.get("server") or not state.get("sequence"):
         return fresh(path, work, run, replication=replication), True
     repl = server(state["server"])
     latest = repl.get_state_info()
+    for wait in STATE_RETRY_S:
+        if latest is not None:
+            break
+        sleep(wait)
+        latest = repl.get_state_info()
     if latest is None:
-        raise RuntimeError(f"{path}: can't read the replication state at {state['server']}")
+        raise Unreachable(f"{path}: can't read the replication state at {state['server']}")
     start = max(1, state["sequence"] + 1 - rewind)
     if latest.sequence < start:
         return state, False

@@ -91,11 +91,25 @@ def latest_basemap_build(fetch=http_get) -> str:
 
 def prepare_sources(sources: Sequence[str], work: Path, run: Run, mode: str = "full",
                     updater: Callable[..., tuple[dict, bool]] = roads.update,
-                    downloader: Callable[..., dict] = roads.fresh, rewind: int = 0) -> tuple[Path, dict[str, str | None]]:
-    """Each state's roads, merged; returns (the merged file, {extract: when its data is from})."""
+                    downloader: Callable[..., dict] = roads.fresh, rewind: int = 0,
+                    stale: list[str] | None = None) -> tuple[Path, dict[str, str | None]]:
+    """Each state's roads, merged; returns (the merged file, {extract: when its data is from}).
+
+    In roads mode a state whose changes can't be had (its server doesn't answer) keeps the roads
+    it has, and goes in `stale`: a day-old state beats a whole batch lost to one.
+    """
     files, when = [], {}
     for path in sources:
-        state = updater(path, work, run, rewind=rewind)[0] if mode == "roads" else downloader(path, work, run, places=True)
+        if mode == "roads":
+            try:
+                state = updater(path, work, run, rewind=rewind)[0]
+            except roads.Unreachable as e:
+                print(f"::warning::{e}; its roads stay as they were", flush=True)
+                state = roads.read_state(work, path) or {}
+                if stale is not None:
+                    stale.append(path)
+        else:
+            state = downloader(path, work, run, places=True)
         files.append(roads.roads_file(work, path))
         when[path] = state.get("timestamp")
     if len(files) == 1:
@@ -144,7 +158,8 @@ def build_batch(regions: Sequence[Region], work: Path, data: Path, *, run: Run =
     now = now or dt.datetime.now(dt.UTC)
     live_by_id = {e["id"]: e for e in (live or {}).get("regions", [])}
     sources = list(dict.fromkeys(g for r in regions for g in r.geofabrik))
-    merged, when = prepare_sources(sources, work, run, mode, rewind=rewind, **prepare)
+    stale: list[str] = []
+    merged, when = prepare_sources(sources, work, run, mode, rewind=rewind, stale=stale, **prepare)
     places_source = prepare_places(sources, work, run) if mode == "full" else None
     clips = work / "regions"
     clips.mkdir(parents=True, exist_ok=True)
@@ -152,6 +167,8 @@ def build_batch(regions: Sequence[Region], work: Path, data: Path, *, run: Run =
     report = []
     for r in regions:
         row: dict = {"id": r.id, "name": r.name, "batch": r.batch, "ok": False}
+        if behind := [g for g in r.geofabrik if g in stale]:
+            row["stale"] = behind  # built with these states' roads from the last update
         t0 = time.perf_counter()
         pack, clip = data / "packs" / f"{r.id}.fwr", clips / f"{r.id}.osm.pbf"
         stamps = [when[g] for g in r.geofabrik if when.get(g)]
