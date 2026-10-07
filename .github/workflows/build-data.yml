@@ -352,7 +352,10 @@ jobs:
           set -e
           aws="aws s3 cp --endpoint-url $R2_ENDPOINT --only-show-errors"
           $aws release/basemap/assets "s3://$R2_BUCKET/basemap/assets" --recursive --cache-control "public, max-age=31536000, immutable"
-          $aws release/cameras "s3://$R2_BUCKET/cameras" --recursive --content-type application/json --cache-control "public, max-age=0, must-revalidate"
+          $aws release/cameras "s3://$R2_BUCKET/cameras" --recursive --exclude "*.gz" --exclude "*.tmp" --content-type application/json --cache-control "public, max-age=0, must-revalidate"
+          if [ -f release/cameras/us.json.gz ]; then
+            $aws release/cameras/us.json.gz "s3://$R2_BUCKET/cameras/us.json.gz" --content-type application/gzip --cache-control "public, max-age=3600"
+          fi
           if [ "$(cat changed.txt)" = "true" ]; then
             # The cleanup gives the files of the manifest being replaced a day's grace.
             if [ -f live/regions.json ]; then

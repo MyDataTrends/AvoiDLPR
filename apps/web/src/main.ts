@@ -13,6 +13,7 @@ import { accuracy, cameraZones, distance, duration, extraTime, nearCameras, site
 import { onHold } from "./hold.ts";
 import { insideBox, LocateError, locate } from "./location.ts";
 import { type BasemapUrls, type Bbox, type CameraState, createMap, fence, mapStyle, Overlays } from "./map.ts";
+import { loadNation, type NationCameras } from "./nation.ts";
 import { type Ride, RIDES, rideSvg, savedRide, saveRide } from "./personas.ts";
 import type { CameraDTO, LonLat, ProfileName, Request, Response, RouteDTO, SiteDTO, Stats } from "./protocol.ts";
 import { type PlacesFile, type Stop, StopSearch } from "./search.ts";
@@ -246,6 +247,8 @@ let mapDark = isDark();
 const mapLimit = national ? fence(national.bbox, 1.5) : fence(region!.bbox);
 const map = createMap($("mapwrap").querySelector("#map")!, region?.bbox ?? national!.bbox, mapLimit, basemap, mapDark);
 let overlays: Overlays | null = null;
+/** Every camera in the country, once loaded (see wantNation). */
+let nation: NationCameras | null = null;
 // When the camera moves on, MapLibre cancels the tile requests it no longer needs, and some browsers
 // report a cancelled fetch as "Failed to fetch". Those aren't failures: ignore errors that arrive
 // while the map is moving or just after it stopped, and report everything else.
@@ -585,6 +588,8 @@ function renderOverlays(): void {
   const chosen = new Set(selectedRoute()?.sites.map((s) => s.site));
   const stateOf = (site: number): CameraState => (chosen.has(site) ? "route" : fastest.has(site) ? "avoided" : "");
   overlays?.setCameras(state.cameras, { rangeM: state.zoneRangeM }, stateOf, state.ringRangeM);
+  // Until an area's cameras are in, the country's dots stand in for them there too.
+  overlays?.setNation(nation, state.stats ? (state.stats.camerasBbox ?? region?.bbox ?? null) : null);
   overlays?.setRoutes((routes ?? []).map((r, i) => ({ coordinates: r.coordinates, selected: i === state.selected, index: i })));
 }
 
@@ -1524,6 +1529,41 @@ function followMap(): void {
   const there = regionsContaining(manifest, [lng, lat])[0];
   if (there) enterRegion(there);
 }
+
+// ---------- every camera in the country (with the country's basemap) ----------
+//
+// The hourly camera job also writes where every camera in the lower 48 is, a few hundred KB. It
+// loads the first time the map leaves the loaded area (zoomed out, or centred somewhere else), or
+// at once when there's no area yet. Zoomed out it's a speck per camera and a glow where they
+// cluster; closer in, grey dots outside the loaded area (see Overlays.setNation).
+
+let nationLoading = false;
+/** After a failed load, when to try again (on a later move of the map). */
+let nationRetryAt = 0;
+const NATION_RETRY_MS = 60_000;
+
+function wantNation(): void {
+  const file = manifest.cameras;
+  if (!national || !file || nation || nationLoading || Date.now() < nationRetryAt) return;
+  const { lng, lat } = map.getCenter();
+  if (region && map.getZoom() >= AREA_ZOOM && inBbox(region.bbox, lng, lat)) return; // still in the area
+  nationLoading = true;
+  loadNation(dataUrl(file.path))
+    .then((n) => {
+      nation = n;
+      $("nationNote").textContent = `Across the country, DeFlock has ${n.count.toLocaleString()} cameras mapped.`;
+      $("nationNote").hidden = false;
+      $("legendNation").hidden = false;
+      render();
+    })
+    .catch((err) => {
+      nationRetryAt = Date.now() + NATION_RETRY_MS;
+      console.warn(`the cameras of the whole country didn't load: ${err instanceof Error ? err.message : err}`);
+    })
+    .finally(() => void (nationLoading = false));
+}
+map.on("load", wantNation);
+map.on("moveend", wantNation);
 for (const layer of ["fw-cameras", "fw-cameras-any", "fw-routes"]) {
   map.on("mouseenter", layer, () => { map.getCanvas().style.cursor = "pointer"; });
   map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; });

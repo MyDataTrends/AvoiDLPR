@@ -72,6 +72,10 @@ spot on the map (right-click on a computer) and choose **Directions to here**. S
 current location or anywhere else. A plain tap on the map doesn't change your trip, so panning
 around can't move it by accident.
 
+Zoom out and you see every camera DeFlock knows of across the country, a red speck each, glowing
+where they crowd together, so you can see how far they've spread. Closer in, cameras outside your
+area are grey dots; inside it they're drawn in full, with where each one looks.
+
 It works like the map apps you already know: **Where to?**, pick a route, **Start**. It follows
 your phone's light or dark mode (or pick one in the menu), and you're the little car on the map:
 a hatchback, pickup, van or scooter, your choice.

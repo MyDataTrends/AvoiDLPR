@@ -16,6 +16,7 @@ let routerLoad = 0;
 let latestLoad = 0;
 let records: CameraRecord[] = [];
 let camerasAt: string | undefined;
+let camerasBbox: [number, number, number, number] | undefined;
 let loaded: { packMB: number; loadMs: number; url: string; fellBack: boolean; failed?: string } = {
   packMB: 0, loadMs: 0, url: "", fellBack: false,
 };
@@ -23,6 +24,7 @@ let loaded: { packMB: number; loadMs: number; url: string; fellBack: boolean; fa
 interface Feed {
   cameras: CameraRecord[];
   built_at?: string;
+  bbox?: [number, number, number, number];
 }
 /** Camera DTOs and their site grouping, rebuilt whenever the router's cameras change. */
 let cams: CameraDTO[] = [];
@@ -60,7 +62,7 @@ function ready(r: Router): void {
     stats: {
       nodes: r.pack.nNodes, edges: r.pack.nEdges, cameras: cams.length, sites: r.cameras.siteCameras.length,
       packMB: loaded.packMB, loadMs: loaded.loadMs, source: meta.source, builtAt: meta.built_at, bbox: meta.bbox,
-      lat0: meta.lat0, lon0: meta.lon0, osmAt: (meta as { osm_at?: string }).osm_at, camerasAt,
+      lat0: meta.lat0, lon0: meta.lon0, osmAt: (meta as { osm_at?: string }).osm_at, camerasAt, camerasBbox,
     },
   });
 }
@@ -112,6 +114,7 @@ scope.onmessage = async (ev) => {
       routerLoad = msg.id;
       records = feed.cameras;
       camerasAt = feed.built_at;
+      camerasBbox = feed.bbox;
       loaded = { ...got, loadMs: performance.now() - t0 };
       ready(router);
       return;
@@ -121,6 +124,7 @@ scope.onmessage = async (ev) => {
       const feed = await fetchFeed(msg.camerasUrl);
       records = feed.cameras;
       camerasAt = feed.built_at;
+      camerasBbox = feed.bbox;
       router.setCameras(records);
       ready(router);
       return;

@@ -61,6 +61,8 @@ export interface Manifest {
    * map then isn't fenced into an area, and areas load as you go.
    */
   basemap?: BasemapEntry & { bbox: [number, number, number, number] };
+  /** Every camera in the lower 48, positions only (see nation.ts), once the hourly job has made it. */
+  cameras?: { path: string };
   regions: RegionEntry[];
 }
 

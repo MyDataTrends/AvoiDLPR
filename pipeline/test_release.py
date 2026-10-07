@@ -102,6 +102,58 @@ def test_refresh_refuses_empty_or_collapsed_feeds(tmp_path):
     assert refresh_cameras.refresh(DALLAS, tmp_path, fetch=_tiles({url: cams(9)})) == 9  # a small dip is fine
 
 
+def test_the_national_file_keeps_every_camera_in_a_few_bytes_each():
+    import random
+
+    rng = random.Random(7)
+    # Two cities' worth of cameras, a pole with two, and one far from both.
+    cams = [{"id": i, "lat": 32.78 + rng.uniform(-0.15, 0.15), "lon": -96.8 + rng.uniform(-0.2, 0.2)} for i in range(400)]
+    cams += [{"id": 1000 + i, "lat": 35.23 + rng.uniform(-0.1, 0.1), "lon": -80.84 + rng.uniform(-0.1, 0.1)} for i in range(300)]
+    cams += [{"id": 5000, "lat": 40.0, "lon": -100.0}, {"id": 5001, "lat": 40.0, "lon": -100.0}]
+    steps = refresh_cameras.encode_national(cams)
+    got = refresh_cameras.decode_national(steps)
+    assert len(got) == len(cams) and got.count((-100.0, 40.0)) == 2  # both on the pole
+    want = sorted((round(c["lon"], 4), round(c["lat"], 4)) for c in cams)
+    assert sorted((round(x, 4), round(y, 4)) for x, y in got) == want  # to the nearest 1/10,000 degree
+    assert all(isinstance(v, int) for v in steps)
+    assert refresh_cameras.encode_national(list(reversed(cams))) == steps  # the order is the file's own
+    import gzip
+    body = gzip.compress(json.dumps(steps, separators=(",", ":")).encode(), mtime=0)
+    assert len(body) < 6 * len(cams), len(body)  # a few bytes a camera
+
+
+def test_refresh_national_writes_the_country_and_refuses_a_collapse(tmp_path):
+    def tile(n, lat, lon):
+        return json.dumps([{"id": lat * 1000 + i, "lat": lat + 0.001 * i, "lon": lon, "tags": {}} for i in range(n)]).encode()
+
+    # Dallas's tile and Raleigh's, and three cameras in Canada, north of the country's box.
+    tiles = {f"{deflock.CDN}/20/-100.json": tile(10, 32, -96.8), f"{deflock.CDN}/20/-80.json": tile(5, 35, -78.6),
+             f"{deflock.CDN}/40/-80.json": tile(3, 51, -79.4)}
+    with pytest.raises(RuntimeError, match="no cameras"):
+        refresh_cameras.refresh_national(tmp_path, fetch=_tiles({}))
+    assert refresh_cameras.refresh_national(tmp_path, fetch=_tiles(tiles)) == 15  # not the three at 50 N
+    path = tmp_path / refresh_cameras.NATIONAL_FEED
+    feed = refresh_cameras.read_national(path)
+    assert feed["count"] == 15 and feed["scale"] == 10_000 and feed["bbox"] == list(refresh_cameras.US_BBOX)
+    assert len(refresh_cameras.decode_national(feed["points"])) == 15
+    first = path.read_bytes()
+    with pytest.raises(RuntimeError, match="shrank"):
+        refresh_cameras.refresh_national(tmp_path, fetch=_tiles({f"{deflock.CDN}/20/-100.json": tile(7, 32, -96.8)}))
+    assert path.read_bytes() == first  # untouched
+
+
+def test_the_hourly_run_writes_the_national_file_unless_one_region_is_asked_for(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(refresh_cameras, "load_regions", lambda: [DALLAS])
+    monkeypatch.setattr(refresh_cameras, "refresh", lambda r, out, fetch: calls.append(r.id) or 1)
+    monkeypatch.setattr(refresh_cameras, "refresh_national", lambda out, fetch: calls.append("us") or 1)
+    (tmp_path / "cameras").mkdir()
+    (tmp_path / refresh_cameras.NATIONAL_FEED).write_bytes(b"")
+    assert refresh_cameras.main(["--out", str(tmp_path)]) == 0 and calls == ["dallas", "us"]
+    calls.clear()
+    assert refresh_cameras.main(["--out", str(tmp_path), "--region", "dallas"]) == 0 and calls == ["dallas"]
+
+
 @pytest.fixture
 def data_dir(tmp_path):
     from pipeline.osm_graph import build_graph
@@ -396,6 +448,18 @@ def test_assemble_keeps_the_live_country_basemap_and_needs_some_basemap(tmp_path
     assert m["basemap"] == country and [e["basemap"] for e in m["regions"]] == [country, country]
     m = assemble(out, regions, [bare], {"schema": SCHEMA, "regions": [_entry("a")]})  # no country basemap anywhere
     assert "basemap" not in m and [e["id"] for e in m["regions"]] == ["a"]  # nothing to draw b with
+
+
+def test_assemble_lists_the_national_camera_file_once_there_is_one(tmp_path):
+    from pipeline.release import assemble
+
+    regions = [Region("a", "A", (0, 0, 1, 1), ("x",))]
+    out = tmp_path / "release"
+    (out / "cameras").mkdir(parents=True)
+    (out / "cameras" / "a.json").write_text("{}")
+    assert "cameras" not in assemble(out, regions, [_entry("a")])
+    (out / "cameras" / "us.json.gz").write_bytes(b"")
+    assert assemble(out, regions, [_entry("a")])["cameras"] == {"path": "cameras/us.json.gz"}
 
 
 def test_prune_keeps_the_country_basemap_and_drops_the_areas_old_ones():

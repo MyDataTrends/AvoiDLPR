@@ -23,6 +23,8 @@ Usage:
       basemap/<id>.<hash>.pmtiles
       basemap/assets/...                 label fonts and icon sprites (cache forever)
       cameras/<id>.json                  camera feed, rewritten hourly (revalidate)
+      cameras/us.json.gz                 every camera in the lower 48, positions only, for the
+                                         map of the whole country (hourly, gzipped)
       parts/<name>.json                  a build batch's entries; build-time only, never uploaded
 
 The same tree is what gets uploaded to object storage (see docs/DEPLOY.md) and what the dev and
@@ -31,7 +33,8 @@ pack or basemap is just a new file plus a new manifest: nothing cached ever goes
 files stay valid for pages that are still open.
 
 With a basemap of the whole country, the manifest names it once (`basemap`, with its bounds) and
-every region's `basemap` is that same file, so an app from before reads it as its area's.
+every region's `basemap` is that same file, so an app from before reads it as its area's. The
+national camera file, once there is one, is the manifest's `cameras`.
 """
 
 from __future__ import annotations
@@ -49,6 +52,7 @@ from pathlib import Path
 
 from . import places as place_index
 from .pack import read_header
+from .refresh_cameras import NATIONAL_FEED
 from .regions import Region, load_regions
 
 SCHEMA = 2
@@ -258,7 +262,8 @@ def assemble(out: Path, regions: list[Region], fresh: list[dict], live: dict | N
     A region needs a camera feed in out/cameras to be listed (the app can't run without one), and
     a region that's no longer in regions.json is dropped. The country's basemap is `basemap` if
     one was just built, else the live manifest's; with one, every region's basemap is it, and
-    without one a region needs a basemap of its own.
+    without one a region needs a basemap of its own. The national camera file is listed once
+    pipeline.refresh_cameras has written it.
     """
     by_id = {e["id"]: e for e in (live or {}).get("regions", [])}
     reusable = bool(live) and live.get("schema") == SCHEMA
@@ -288,6 +293,7 @@ def assemble(out: Path, regions: list[Region], fresh: list[dict], live: dict | N
         "generated_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
         "assets": asset_paths(out),
         **({"basemap": basemap} if basemap else {}),
+        **({"cameras": {"path": NATIONAL_FEED}} if (out / NATIONAL_FEED).exists() else {}),
         "regions": entries,
     }
 

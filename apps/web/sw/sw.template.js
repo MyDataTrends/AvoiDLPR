@@ -55,7 +55,8 @@ const isAreaFile = (url) => /\/(packs\/[^/]+\.fwr|places\/[^/]+\.fwp)(\.gz)?$/.t
 /** How many areas' road packs and search indexes to keep for offline use. */
 const MAX_PACKS = 4;
 const isStaticAsset = (url) => /\/basemap\/assets\//.test(url.pathname);
-const isMutableData = (url) => /\/(cameras\/[^/]+\.json|regions\.json)$/.test(url.pathname);
+/** Camera feeds (cameras/<area>.json, and the whole country's cameras/us.json.gz) and the manifest. */
+const isMutableData = (url) => /\/(cameras\/[^/]+\.json(\.gz)?|regions\.json)$/.test(url.pathname);
 
 self.addEventListener("fetch", (event) => {
   const request = event.request;

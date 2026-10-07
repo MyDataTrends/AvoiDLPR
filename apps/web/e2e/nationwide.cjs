@@ -1,11 +1,14 @@
 // End-to-end check of the map of the whole country: the first visit opens on the lower 48 with
 // no area to choose, the map isn't fenced into an area, and areas load as you go (settling on a
 // city, searching for one, a trip that only fits in another, your location), all in place,
-// without a reload. It needs the dev server on :5173 with Dallas staged, and Playwright with
-// Chromium. With the playwright skill:
+// without a reload. Every camera in the country shows too: a heat map zoomed out, dots closer in
+// outside the loaded area. It needs the dev server on :5173 with Dallas staged, and Playwright
+// with Chromium. With the playwright skill:
 //   node ~/.claude/skills/playwright-skill/run.js apps/web/e2e/nationwide.cjs
 // The release only has to hold Dallas: the test serves a manifest in the country-basemap form
-// (one basemap named at the top and by every area), reusing Dallas's files for two more areas.
+// (one basemap named at the top and by every area), reusing Dallas's files for two more areas,
+// and a national camera file made up from Dallas's cameras and a few more.
+const zlib = require('zlib');
 const { chromium, devices } = require('playwright');
 
 const URL = 'http://localhost:5173/';
@@ -18,9 +21,35 @@ function check(name, ok, detail = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  (${detail})` : ''}`);
 }
 
+/**
+ * Every camera in the country, as the hourly job writes it (pipeline/refresh_cameras.py): Dallas's,
+ * a cluster round Charlotte, a strip just west of Dallas's feed, and one out in Kansas. Gzipped, or
+ * plain JSON (`plain`), as a host that decodes it on the way hands it over.
+ */
+function nationalFile(feed, charlotte, plain) {
+  let seed = 7;
+  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const points = feed.cameras.map((c) => [c.lon, c.lat]);
+  for (let i = 0; i < 400; i++) points.push([charlotte.center[0] + (rand() - 0.5) * 0.3, charlotte.center[1] + (rand() - 0.5) * 0.3]);
+  const [w, s, , n] = feed.bbox;
+  const west = Array.from({ length: 40 }, () => [w - 0.02 - rand() * 0.1, s + rand() * (n - s)]);
+  points.push(...west, [-98.5, 38.5]);
+  const steps = [];
+  let x0 = 0, y0 = 0;
+  for (const [lon, lat] of points) {
+    const x = Math.round(lon * 1e4), y = Math.round(lat * 1e4);
+    steps.push(x - x0, y - y0);
+    [x0, y0] = [x, y];
+  }
+  const json = JSON.stringify({ source: 'test', built_at: '2026-10-07T12:00:00+00:00', bbox: [-125, 24.3, -66.8, 49.5],
+    count: points.length, scale: 10000, points: steps });
+  return { body: plain ? json : zlib.gzipSync(json), contentType: plain ? 'application/json' : 'application/gzip', count: points.length };
+}
+
 /** The staged manifest as the monthly build now writes it, with Fort Worth (overlapping) and Charlotte (far away). */
-async function nationwide(context) {
+async function nationwide(context, { plainNation = false } = {}) {
   const real = await (await fetch(`${URL}regions.json`)).json();
+  const feed = await (await fetch(`${URL}cameras/dallas.json`)).json();
   const dallas = real.regions.find((r) => r.id === 'dallas');
   const basemap = { ...dallas.basemap, bbox: LOWER48 };
   const [w, s, , n] = dallas.bbox;
@@ -33,10 +62,49 @@ async function nationwide(context) {
     bbox: [-81.27, 34.87, -80.5, 35.62], center: [-80.885, 35.245],
   };
   const regions = [charlotte, { ...dallas, basemap }, fortWorth].map((r) => ({ ...r, basemap }));
-  const manifest = { ...real, basemap, regions };
+  const nation = nationalFile(feed, charlotte, plainNation);
+  const manifest = { ...real, basemap, cameras: { path: 'cameras/us.json.gz' }, regions };
   await context.route('**/regions.json', (route) => route.fulfill({ json: manifest }));
-  return { dallas, fortWorth, charlotte };
+  const served = { nation: 0 };
+  await context.route('**/cameras/us.json.gz', (route) => {
+    served.nation++;
+    return route.fulfill({ body: nation.body, contentType: nation.contentType });
+  });
+  return { dallas, fortWorth, charlotte, feed, nation, served };
 }
+
+/** How red the map is round each [lon, lat] (the most over a few pixels): only the heat map is red there. */
+async function rednessAt(page, places) {
+  await page.waitForFunction(() => {
+    const { map } = window.__fw;
+    return map.loaded() && !map.isMoving() && map.areTilesLoaded();
+  }, null, { timeout: 30_000 });
+  await page.waitForTimeout(600);
+  const shot = (await page.screenshot()).toString('base64');
+  return page.evaluate(async ({ shot, places }) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${shot}`;
+    await img.decode();
+    const c = document.createElement('canvas');
+    [c.width, c.height] = [img.width, img.height];
+    const g = c.getContext('2d');
+    g.drawImage(img, 0, 0);
+    const { map } = window.__fw;
+    const box = map.getContainer().getBoundingClientRect();
+    const k = img.width / window.innerWidth;
+    return places.map((p) => {
+      const { x, y } = map.project(p);
+      const d = g.getImageData(Math.round((box.left + x) * k) - 5, Math.round((box.top + y) * k) - 5, 11, 11).data;
+      let most = 0;
+      for (let i = 0; i < d.length; i += 4) most = Math.max(most, d[i] - (d[i + 1] + d[i + 2]) / 2);
+      return Math.round(most);
+    });
+  }, { shot, places });
+}
+
+/** The national cameras drawn as dots on screen now ([lon, lat] each). */
+const dotsShown = (page) => page.evaluate(() => window.__fw.map.queryRenderedFeatures({ layers: ['fw-nation-dots'] })
+  .flatMap((f) => (f.geometry.type === 'MultiPoint' ? f.geometry.coordinates : [f.geometry.coordinates])));
 
 const ready = (page) => page.waitForFunction(() => document.documentElement.dataset.ready === 'true', null, { timeout: 90_000 });
 const areaName = (page) => page.locator('#regionName').textContent();
@@ -65,7 +133,7 @@ const stillSamePage = (page) => page.evaluate(() => window.__sameVisit === true)
   const browser = await chromium.launch({ headless: true, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   try {
     const ctx = await browser.newContext({ ...devices['Pixel 7'] });
-    const { dallas, fortWorth, charlotte } = await nationwide(ctx);
+    const { dallas, fortWorth, charlotte, feed, nation, served } = await nationwide(ctx);
     const page = await ctx.newPage();
     page.on('pageerror', (e) => errors.push(e.message));
     page.on('console', (m) => m.type() === 'error' && !/failed to fetch|aborted/i.test(m.text()) && errors.push(m.text()));
@@ -81,6 +149,16 @@ const stillSamePage = (page) => page.evaluate(() => window.__sameVisit === true)
       (await areaName(page)) === 'None yet' && (await page.locator('#loadStatus').innerText()) === 'Zoom in on a city, or search for one'
       && (await page.locator('#chips').isHidden()), await page.locator('#loadStatus').innerText());
 
+    // ---------- every camera in the country ----------
+    await page.waitForFunction(() => !document.getElementById('nationNote').hidden, null, { timeout: 15_000 });
+    check('with no area loaded, the cameras of the whole country load', served.nation === 1);
+    const count = await page.locator('#nationNote').textContent();
+    check('and the menu says how many there are', count.includes(nation.count.toLocaleString('en-US')), count);
+    await page.evaluate(() => window.__fw.map.jumpTo({ center: [-89, 35], zoom: 3 })); // Dallas to Charlotte, on a phone
+    const heat = await rednessAt(page, [dallas.center, charlotte.center, [-101, 42.2]]);
+    check('zoomed out, each is a red speck, with a glow where they cluster (and nothing where there are none)',
+      heat[0] > 60 && heat[1] > 60 && heat[2] < 15, `Dallas ${heat[0]}, Charlotte ${heat[1]}, Nebraska ${heat[2]}`);
+
     // ---------- the map isn't fenced into an area ----------
     await page.evaluate(([lon, lat]) => window.__fw.map.jumpTo({ center: [lon, lat], zoom: 6 }), charlotte.center);
     const far = await camera(page);
@@ -93,6 +171,18 @@ const stillSamePage = (page) => page.evaluate(() => window.__sameVisit === true)
     await waitArea(page, 'Dallas, TX');
     await ready(page);
     check('zooming in on Dallas loads Dallas, in place', await stillSamePage(page));
+    // Its west edge: Dallas's cameras on one side, the made-up strip beyond its feed on the other.
+    await page.evaluate(([lon, lat]) => window.__fw.map.jumpTo({ center: [lon, lat], zoom: 10.5 }),
+      [dallas.bbox[0] + 0.04, (dallas.bbox[1] + dallas.bbox[3]) / 2]);
+    await page.waitForFunction(() => !window.__fw.map.isMoving() && window.__fw.map.areTilesLoaded(), null, { timeout: 15_000 });
+    await page.waitForTimeout(500);
+    const [fw, , , fn] = feed.bbox, fs = feed.bbox[1];
+    const dots = await dotsShown(page);
+    const inFeed = dots.filter(([x, y]) => x >= fw && x <= feed.bbox[2] && y >= fs && y <= fn).length;
+    const own = await page.evaluate(() => window.__fw.map.queryRenderedFeatures({ layers: ['fw-cameras', 'fw-cameras-any'] }).length);
+    check('closer in, cameras outside the area are dots, and the area\'s own draw as before',
+      dots.some(([x]) => x < fw) && inFeed === 0 && own > 0, `${dots.length} dots, ${inFeed} of them in the area's feed, ${own} of its own`);
+    await page.evaluate(([lon, lat]) => window.__fw.map.jumpTo({ center: [lon, lat], zoom: 11 }), dallas.center);
     check('then the sample trip and quick searches are there', await page.locator('#chips').isVisible());
     check('and it\'s remembered', (await page.evaluate(() => localStorage.getItem('avoidlpr.region'))) === 'dallas');
 
@@ -122,6 +212,18 @@ const stillSamePage = (page) => page.evaluate(() => window.__sameVisit === true)
     check('with a trip planned, looking elsewhere doesn\'t switch areas', (await areaName(page)) === 'Dallas, TX'
       && (await page.evaluate(() => window.__fw.state.routes?.length ?? 0)) > 0);
     await page.locator('#clear').click();
+
+    // ---------- the theme changes, and the country's cameras go back on the new map ----------
+    await page.evaluate(() => window.__fw.map.jumpTo({ center: [-80.84, 35.23], zoom: 8 }));
+    await page.locator('#menuBtn').tap();
+    await page.locator('[data-theme-choice="dark"]').tap();
+    await page.locator('#menuClose').tap();
+    await page.waitForFunction(() => window.__fw.map.isStyleLoaded() && window.__fw.map.areTilesLoaded(), null, { timeout: 30_000 });
+    await page.waitForTimeout(800);
+    check('in dark mode they\'re still there', (await dotsShown(page)).length > 0);
+    await page.locator('#menuBtn').tap();
+    await page.locator('[data-theme-choice="auto"]').tap();
+    await page.locator('#menuClose').tap();
 
     // ---------- a destination that only fits in another area ----------
     await page.evaluate(([lon, lat]) => window.__fw.map.jumpTo({ center: [lon, lat], zoom: 11 }), dallas.center);
@@ -156,6 +258,7 @@ const stillSamePage = (page) => page.evaluate(() => window.__sameVisit === true)
     const to = await page.evaluate(() => window.__fw.state.to);
     check('opening it switches in place and keeps the destination', Boolean(to) && inBox(fortWorth.bbox, { lon: to[0], lat: to[1] })
       && await stillSamePage(page), JSON.stringify(to));
+    check('the country\'s cameras came down once, however much the map moved', served.nation === 1, `${served.nation} times`);
     await ctx.close();
 
     // ---------- first visit with "Your location" ----------
@@ -181,11 +284,13 @@ const stillSamePage = (page) => page.evaluate(() => window.__sameVisit === true)
 
     // ---------- no area loaded, and a search that matches no area ----------
     const plain = await browser.newContext({ ...devices['Pixel 7'] });
-    await nationwide(plain);
+    await nationwide(plain, { plainNation: true });
     const p3 = await plain.newPage();
     p3.on('pageerror', (e) => errors.push(e.message));
     await p3.goto(URL);
     await p3.waitForFunction(() => window.__fw?.map.loaded(), null, { timeout: 60_000 });
+    await p3.waitForFunction(() => !document.getElementById('nationNote').hidden, null, { timeout: 15_000 });
+    check('a host that un-gzips the country\'s cameras on the way does no harm', true);
     await p3.locator('#toInput').tap();
     await p3.locator('#toInput').fill('zzzz');
     await p3.waitForTimeout(400);

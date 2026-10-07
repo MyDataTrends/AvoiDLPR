@@ -51,6 +51,8 @@ export interface Stats {
   osmAt?: string;
   /** When the camera feed was made. */
   camerasAt?: string;
+  /** The box the camera feed covers (west, south, east, north): every camera in it is in the feed. */
+  camerasBbox?: [number, number, number, number];
 }
 
 export type Request =

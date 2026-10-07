@@ -1,8 +1,9 @@
 name: Refresh cameras
 
 # Hourly: pull the latest camera locations from DeFlock's published tiles and publish the feed of
-# every region that's online. The app revalidates the feeds on every load, so changes reach users
-# within the hour. Roads and basemaps are left alone.
+# every region that's online, and cameras/us.json.gz, every camera in the lower 48 for the map
+# zoomed out over the country. The app revalidates the feeds on every load, so changes reach
+# users within the hour. Roads and basemaps are left alone.
 #
 # Once a day it also deletes the road packs and basemaps nothing names any more (replaced by a
 # build), a day after the switch: it keeps the bucket at about one copy of the map data, inside the
@@ -71,13 +72,18 @@ jobs:
         run: python -m pipeline.refresh_cameras --out release --listed-in release/regions.json
 
       # Also after a partial failure: the regions that refreshed go out, the rest keep their feed.
+      # The national file is gzipped, and only an overview: browsers may keep it for an hour.
       - name: Publish
         if: always() && steps.live.outputs.published == 'true'
-        run: >
-          aws s3 cp release/cameras "s3://$R2_BUCKET/cameras" --recursive
-          --endpoint-url "$R2_ENDPOINT" --only-show-errors
-          --content-type application/json
-          --cache-control "public, max-age=0, must-revalidate"
+        run: |
+          set -e
+          aws="aws s3 cp --endpoint-url $R2_ENDPOINT --only-show-errors"
+          $aws release/cameras "s3://$R2_BUCKET/cameras" --recursive --exclude "*.gz" --exclude "*.tmp" \
+            --content-type application/json --cache-control "public, max-age=0, must-revalidate"
+          if [ -f release/cameras/us.json.gz ]; then
+            $aws release/cameras/us.json.gz "s3://$R2_BUCKET/cameras/us.json.gz" \
+              --content-type application/gzip --cache-control "public, max-age=3600"
+          fi
 
       - name: Delete superseded map data (once a day)
         if: always() && steps.live.outputs.published == 'true'

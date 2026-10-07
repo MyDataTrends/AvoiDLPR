@@ -1235,6 +1235,11 @@ dialog::backdrop {
   background: rgb(224 49 49 / 0.15);
 }
 
+/* Every camera in the country, zoomed out: a speck each, in a glow where they cluster. */
+.swatch.nation {
+  background: radial-gradient(circle, #c92a2a 0 2px, rgb(224 49 49 / 0.4) 2.5px, rgb(224 49 49 / 0) 70%);
+}
+
 /* ---------- the area chooser ---------- */
 
 .chooser {
