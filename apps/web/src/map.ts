@@ -1,17 +1,19 @@
 // Map setup: a self-hosted Protomaps basemap (tiles, fonts and icons all from this origin), in a
-// light or dark flavour to match the app, plus overlays for routes, cameras, capture zones and the
-// GPS accuracy circle. (You, on the map, are a DOM marker: your ride, from personas.ts.)
+// light or dark flavour to match the app, plus overlays for routes, cameras, capture zones, every
+// camera in the country and the GPS accuracy circle. (You, on the map, are a DOM marker: your
+// ride, from personas.ts.)
 import { layers, namedFlavor } from "@protomaps/basemaps";
 import type { Feature, FeatureCollection, Point } from "geojson";
 import {
-  addProtocol, type GeoJSONSource, type LineLayerSpecification, Map as MapLibreMap, type PointLike, setWorkerUrl,
-  type StyleSpecification,
+  addProtocol, type ExpressionSpecification, type GeoJSONSource, type LineLayerSpecification, Map as MapLibreMap, type PointLike,
+  setWorkerUrl, type StyleSpecification,
 } from "maplibre-gl";
 // MapLibre locates its tile worker relative to its own module URL, which bundlers relocate;
 // let Vite build the worker and hand MapLibre the result.
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { Protocol } from "pmtiles";
 
+import type { NationCameras } from "./nation.ts";
 import type { CameraDTO } from "./protocol.ts";
 
 /** Overlay colours per theme; they match the app's tokens (style.css). */
@@ -23,6 +25,8 @@ const PALETTES = {
     /** A camera on the fastest route that the selected route avoids. */
     avoided: "#2f9e44",
     zone: "#e03131",
+    /** Each camera in the country, zoomed out. */
+    speck: "#c92a2a",
     /** The selected route; the others are `alt`. */
     accent: "#2563eb",
     alt: "#8d96a0",
@@ -34,6 +38,7 @@ const PALETTES = {
     route: "#ff6b6b",
     avoided: "#51cf66",
     zone: "#ff6b6b",
+    speck: "#ff8787",
     accent: "#6b9bff",
     alt: "#6c7480",
     halo: "#1f2023",
@@ -46,6 +51,12 @@ export type CameraState = "route" | "avoided" | "";
 const EMPTY: FeatureCollection = { type: "FeatureCollection", features: [] };
 const CAMERA_LAYERS = ["fw-cameras", "fw-cameras-any"];
 let protocolRegistered = false;
+
+/** A colour of the palette, see-through. */
+function rgba(hex: string, alpha: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
 
 /**
  * Absolute URLs of the basemap's pieces (see data.ts): the tile archive, label fonts and icon
@@ -155,6 +166,9 @@ export interface RouteLine {
  */
 export class Overlays {
   private readonly map: MapLibreMap;
+  /** What `setNation` last drew. */
+  private nation: NationCameras | null = null;
+  private nationArea = "";
 
   constructor(map: MapLibreMap, dark: boolean) {
     this.map = map;
@@ -162,9 +176,44 @@ export class Overlays {
     for (const [name, color] of [["fw-cam", c.camera], ["fw-cam-route", c.route], ["fw-cam-avoided", c.avoided]] as const) {
       map.addImage(name, arrow(color, c.halo), { pixelRatio: 2 });
     }
-    for (const id of ["fw-accuracy", "fw-rings", "fw-zones", "fw-routes", "fw-cameras"]) {
+    for (const id of ["fw-nation", "fw-accuracy", "fw-rings", "fw-zones", "fw-routes", "fw-cameras"]) {
       map.addSource(id, { type: "geojson", data: EMPTY });
     }
+
+    // Every camera in the country. Zoomed out, a fine red speck for each and a soft glow where
+    // they crowd together, both under the basemap's labels so place names stay readable. The glow
+    // is wide and faint on purpose: a city's thousands light up, a town's few barely tint the map.
+    const labels = map.getStyle().layers.find((l) => l.type === "symbol")?.id;
+    map.addLayer({
+      id: "fw-nation-heat", type: "heatmap", source: "fw-nation", maxzoom: 8,
+      paint: {
+        "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 2, 8, 4, 16, 6, 28, 8, 36],
+        "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 2, 0.012, 4, 0.025, 6, 0.06, 8, 0.15],
+        "heatmap-color": ["interpolate", ["linear"], ["heatmap-density"], 0, rgba(c.zone, 0), 0.04, rgba(c.zone, 0.06),
+          0.15, rgba(c.zone, 0.18), 0.35, rgba(c.zone, 0.3), 0.6, rgba(c.zone, 0.4), 1, rgba(c.zone, 0.5)],
+        "heatmap-opacity": ["interpolate", ["linear"], ["zoom"], 6.5, 1, 8, 0],
+      },
+    }, labels);
+    map.addLayer({
+      id: "fw-nation-specks", type: "circle", source: "fw-nation", maxzoom: 7.5,
+      paint: {
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 2, 0.6, 5, 0.9, 7.5, 1.2],
+        "circle-color": c.speck,
+        "circle-opacity": ["interpolate", ["linear"], ["zoom"], 2, 0.45, 6, 0.6, 6.5, 0.6, 7.5, 0],
+      },
+    }, labels);
+    // Closer in, where the loaded area's own cameras appear (below), the rest turn into grey dots
+    // like them; none inside that area, whose cameras draw there in full.
+    map.addLayer({
+      id: "fw-nation-dots", type: "circle", source: "fw-nation", minzoom: 6.5, filter: ["!", ["get", "inside"]],
+      paint: {
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 6.5, 1.1, 9, 1.5, 13, 3, 16, 5],
+        "circle-color": c.camera,
+        "circle-opacity": ["interpolate", ["linear"], ["zoom"], 6.5, 0, 7.5, 0.85],
+        "circle-stroke-color": c.halo,
+        "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 10, 0, 12, 1],
+      },
+    });
 
     map.addLayer({
       id: "fw-accuracy", type: "fill", source: "fw-accuracy",
@@ -202,17 +251,22 @@ export class Overlays {
         "line-opacity": ["case", ["get", "selected"], 0.95, 0.75],
       },
     });
+    // The area's cameras, from as far out as a metro fits the screen. Further out (only the
+    // country's map zooms out that far) they're specks like every other camera in the country.
+    const fadeIn = (): ExpressionSpecification => ["interpolate", ["linear"], ["zoom"], 6.5, 0, 7.5, 1];
     map.addLayer({
-      id: "fw-cameras-any", type: "circle", source: "fw-cameras", filter: ["==", ["get", "mode"], "any"],
+      id: "fw-cameras-any", type: "circle", source: "fw-cameras", minzoom: 6.5, filter: ["==", ["get", "mode"], "any"],
       paint: {
         "circle-radius": ["interpolate", ["linear"], ["zoom"], 9, 1.5, 13, 3, 16, 6],
         "circle-color": ["match", ["get", "on"], "route", c.route, "avoided", c.avoided, c.camera],
+        "circle-opacity": fadeIn(),
         "circle-stroke-color": c.halo,
         "circle-stroke-width": 1.5,
+        "circle-stroke-opacity": fadeIn(),
       },
     });
     map.addLayer({
-      id: "fw-cameras", type: "symbol", source: "fw-cameras", filter: ["!=", ["get", "mode"], "any"],
+      id: "fw-cameras", type: "symbol", source: "fw-cameras", minzoom: 6.5, filter: ["!=", ["get", "mode"], "any"],
       layout: {
         "icon-image": ["match", ["get", "on"], "route", "fw-cam-route", "avoided", "fw-cam-avoided", "fw-cam"],
         "icon-rotate": ["get", "bearing"],
@@ -227,7 +281,8 @@ export class Overlays {
         "symbol-sort-key": ["case", ["==", ["get", "on"], ""], 0, 1],
       },
       paint: {
-        "icon-opacity": ["interpolate", ["linear"], ["zoom"], 9, ["case", ["==", ["get", "on"], ""], 0.55, 1], 14, 1],
+        "icon-opacity": ["interpolate", ["linear"], ["zoom"], 6.5, 0, 7.5, ["case", ["==", ["get", "on"], ""], 0.55, 1],
+          9, ["case", ["==", ["get", "on"], ""], 0.55, 1], 14, 1],
       },
     });
   }
@@ -257,6 +312,28 @@ export class Overlays {
     this.source("fw-cameras").setData({ type: "FeatureCollection", features: points });
     this.source("fw-zones").setData({ type: "FeatureCollection", features: zones });
     this.source("fw-rings").setData({ type: "FeatureCollection", features: rings });
+  }
+
+  /**
+   * Every camera in the country (`nation`, or nothing), with `area` the box the loaded area's own
+   * cameras cover: the dots leave that to them. The same data and area again cost nothing.
+   */
+  setNation(nation: NationCameras | null, area: Bbox | null): void {
+    const key = area?.join() ?? "";
+    if (nation === this.nation && key === this.nationArea) return;
+    this.nation = nation;
+    this.nationArea = key;
+    // Two features, the cameras inside the area and the rest: one point object each, not 100,000.
+    const inside: [number, number][] = [], outside: [number, number][] = [];
+    const p = nation?.points ?? [];
+    for (let i = 0; i + 1 < p.length; i += 2) {
+      const x = p[i], y = p[i + 1];
+      (area && x >= area[0] && x <= area[2] && y >= area[1] && y <= area[3] ? inside : outside).push([x, y]);
+    }
+    const part = (isInside: boolean, coordinates: [number, number][]): Feature => ({
+      type: "Feature", properties: { inside: isInside }, geometry: { type: "MultiPoint", coordinates },
+    });
+    this.source("fw-nation").setData({ type: "FeatureCollection", features: [part(true, inside), part(false, outside)] });
   }
 
   /** Draw the route options; the selected one sits on top, the rest stay tappable behind it. */

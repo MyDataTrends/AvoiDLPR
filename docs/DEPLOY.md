@@ -22,12 +22,13 @@ hosting is free-tier friendly and there's nothing to keep running.
 | Piece | Where | What it is |
 |---|---|---|
 | The app | Cloudflare Worker (static files only) | `apps/web`, built by Vite: about 2 MB of HTML, JS and CSS, plus the service worker and the headers file |
-| The data | Cloudflare R2 bucket | A Protomaps basemap of the whole lower 48 (about 16 GB, to zoom 15) and, for each of 135 US metro areas, a gzipped road pack (1 to 13 MB), a search index of its addresses and places (a few MB) and a camera feed refreshed hourly; plus fonts and sprites. About 17 GB in all, described by `regions.json` |
+| The data | Cloudflare R2 bucket | A Protomaps basemap of the whole lower 48 (about 16 GB, to zoom 15) and, for each of 135 US metro areas, a gzipped road pack (1 to 13 MB), a search index of its addresses and places (a few MB) and a camera feed refreshed hourly; every camera in the country in one file of a few hundred KB, also hourly, for the zoomed-out map; plus fonts and sprites. About 17 GB in all, described by `regions.json` |
 | Data refresh | GitHub Actions | `build-data` (monthly) and `refresh-cameras` (hourly) |
 
 The app fetches `regions.json` first, and everything else is named in it, so adding a city is a
 data change. Big files have content-hashed names and are cached forever; the camera feeds and
-`regions.json` are revalidated on every load. See `pipeline/release.py` for the layout.
+`regions.json` are revalidated on every load, and the country's cameras (`cameras/us.json.gz`, an
+overview) may be kept for an hour. See `pipeline/release.py` for the layout.
 
 ## The checklist for when you're at your computer
 

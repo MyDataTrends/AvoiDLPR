@@ -67,6 +67,12 @@ Stop take a deeper red (5.5:1).
 | Camera / on the route / avoided | #495057 / #e03131 / #2f9e44 | #adb5bd / #ff6b6b / #51cf66 |
 | Camera zone fill | #e03131 | #ff6b6b |
 | Ring fill (where a camera may still see you) | The zone colour, fainter: 3–8% opacity against the zone's 8–20% | The same |
+| Every camera in the country, zoomed out | A #c92a2a speck each (45–60% opacity) and a glow of the zone colour, at most 50%, where they cluster; both under the labels | #ff8787 specks, the same glow |
+| The country's cameras from zoom 7, outside the loaded area | Grey dots, like the area's cameras | The same, in the dark camera grey |
+
+The country's cameras hand over as you zoom in: by zoom 7.5 the specks and glow have faded into
+dots outside the loaded area, and the area's own cameras have faded in, so a metro reads the same
+on either side of its edge.
 
 ## Layout
 

@@ -9,6 +9,12 @@ It looks and works like other map apps; [docs/DESIGN.md](../../docs/DESIGN.md) h
   button, and that area's road pack, cameras and search index load in place, with no reload.
   The area is remembered on the device; **Change** in the menu lists them all. With a basemap
   per area instead (an older release, or a local one), the first visit asks where you drive.
+- **Every camera in the country.** With the country's basemap and the manifest's `cameras`
+  (`cameras/us.json.gz`, every camera in the lower 48, written hourly), the map shows them all
+  once it leaves the loaded area (zoomed out, or centred elsewhere): zoomed out, a red speck each
+  and a soft glow where they cluster; from about zoom 7, grey dots outside the loaded area, whose
+  own cameras draw in full. The file is positions only, a few hundred KB, and loads at most once
+  a visit ([`src/nation.ts`](src/nation.ts)); the menu's About the data says how many there are.
 - **Where to?** With nothing planned, the app is the map, a **Where to?** box and quick searches
   (gas, coffee, groceries, food, and a sample trip). The From and To fields are search boxes:
   type an address, a street, a place (a store, a stadium, the airport) or coordinates, and pick
@@ -45,7 +51,7 @@ where you are.
 ## Where the data comes from
 
 The app boots by fetching `regions.json`, a manifest listing each region's road pack, search
-index, camera feed and basemap, and the basemap of the whole country, and names everything else
+index, camera feed and basemap, and the basemap and cameras of the whole country, and names everything else
 from it ([`src/data.ts`](src/data.ts)). Where that manifest lives is `VITE_DATA_BASE` (a URL, set when the
 app is built):
 
@@ -150,7 +156,8 @@ is the one you want. `-- --port 5000` changes the port and `-- --no-build` skips
 | `src/search-worker.ts` | Downloads the area's search index once the road map is in, and answers searches and "what's here" (`PlaceSearch` in the router package) |
 | `src/search.ts` | The From and To fields as search boxes: the results list, keyboard (arrows, Enter, Escape), "Choose on the map", coordinates without an index |
 | `src/fetch-data.ts` | Downloading a road pack or search index: progress, the manifest's SHA-256, un-gzipping |
-| `src/map.ts` | MapLibre with the Protomaps light or dark style via the `pmtiles://` protocol; overlays for routes (the selected one in the accent colour), camera arrows (rotated to where each camera looks), capture zones and the GPS accuracy circle, coloured per theme |
+| `src/nation.ts` | Downloading and decoding every camera in the country (`cameras/us.json.gz`): positions only, as steps from one camera to the next |
+| `src/map.ts` | MapLibre with the Protomaps light or dark style via the `pmtiles://` protocol; overlays for routes (the selected one in the accent colour), camera arrows (rotated to where each camera looks), capture zones, every camera in the country (specks and a glow zoomed out, dots closer in) and the GPS accuracy circle, coloured per theme |
 | `src/personas.ts` | Your ride: four cartoon vehicles as inline SVG, and the one picked, remembered on the device |
 | `src/data.ts` | Where data lives (`VITE_DATA_BASE`), the `regions.json` manifest, which area to open, and which areas hold a point |
 | `src/chooser.ts` | The "Where do you drive?" dialog: search, grouping by state, pick by location |
@@ -231,11 +238,13 @@ and that search talks to nothing but the site. It needs Dallas's search index st
 first-visit chooser, search, picking by list and by location, remembering, trips that leave the
 area, and storage being blocked, every switch in place. It serves its own three-area manifest, so
 it only needs Dallas staged.
-[`e2e/nationwide.cjs`](e2e/nationwide.cjs) (21 checks) covers the country's basemap: the first
+[`e2e/nationwide.cjs`](e2e/nationwide.cjs) (28 checks) covers the country's basemap: the first
 visit on the lower 48 with nothing to choose, a map that isn't fenced in, and areas loading as you
 go (settling on a city, searching for one, a destination that fits in another, your location),
-with no reloads and no flip-flopping where areas overlap. It serves a manifest in that form,
-reusing Dallas's files.
+with no reloads and no flip-flopping where areas overlap. And every camera in the country: specks
+and a glow where they cluster zoomed out, dots outside the loaded area closer in (none inside
+it), still there after a switch to dark mode, downloaded once however much the map moves, gzipped
+or not. It serves a manifest in that form, reusing Dallas's files, and a made-up national file.
 [`e2e/navigate.cjs`](e2e/navigate.cjs) (17 checks) drives the example trip with fed GPS fixes:
 the camera-ahead, in-zone and near-a-camera alerts, the route card's count of cameras it passes
 near, going off route and rerouting, arriving, and that no position reaches the URL.
