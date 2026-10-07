@@ -128,12 +128,11 @@ first deploy, copy the Worker's address into the R2 CORS policy from step 2: it'
 `https://map.avoidlpr.workers.dev`, the Worker's name followed by the account's workers.dev
 subdomain (set under **Workers & Pages > Overview > Subdomain**). Every push to `main` redeploys.
 
-Cloudflare also builds every other branch (pull requests), then uploads a preview of it. Those
-uploads failed for this Worker, so on branch builds the build step puts a stand-in in place of
-`wrangler` that skips the preview upload (`apps/web/scripts/cloudflare-branch-builds.mjs`):
-the branch is still built, and its "Workers Builds" check passes or fails on that alone. GitHub
-CI tests pull requests anyway. To stop branch builds altogether, untick **Builds for
-non-production branches** under **Settings > Build > Branch control**.
+Cloudflare also builds every other branch (pull requests), then runs `npx wrangler preview` to
+publish a preview of it. That step failed for this Worker, so on branch builds the build step
+puts a stand-in in place of `wrangler` that skips the preview
+(`apps/web/scripts/cloudflare-branch-builds.mjs`): the branch is still built, and its "Workers
+Builds" check passes or fails on that alone. GitHub CI tests pull requests anyway.
 
 (Cloudflare Pages, now the legacy option, works too: build output directory `apps/web/dist`,
 and the same build command and variables.)
