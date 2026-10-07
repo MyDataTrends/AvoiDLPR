@@ -180,6 +180,9 @@ Notes:
   still work. To get them sooner than the 3rd, run **Build map data** in full mode.
 - The nightly update's roads live in GitHub's Actions cache (10 GB a repository; old entries
   are evicted). If they're evicted, the next run downloads those states again.
+- **Measure a US basemap** (Actions tab) dry-runs a basemap of the whole lower 48 at each top zoom
+  and reports the sizes in its summary, without downloading the tiles or uploading anything: the
+  first step towards one map of the country instead of 135 metro ones.
 
 ## Adding a city
 
