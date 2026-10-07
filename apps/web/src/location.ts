@@ -21,9 +21,9 @@ export class LocateError extends Error {
 const MESSAGES: Record<LocateFailure, string> = {
   unsupported: "This browser can't share your location.",
   insecure: "Your browser only shares location on secure (https) pages.",
-  denied: "Location access is blocked. Allow it for this site in your browser's settings, or tap the map to pick a start.",
-  unavailable: "Your device couldn't work out where you are. Tap the map to pick a start.",
-  timeout: "Finding your location took too long. Try again, or tap the map to pick a start.",
+  denied: "Location access is blocked. Allow it for this site in your browser's settings, or hold the map to pick a start.",
+  unavailable: "Your device couldn't work out where you are. Hold the map to pick a start.",
+  timeout: "Finding your location took too long. Try again, or hold the map to pick a start.",
 };
 
 export function locate(timeoutMs = 12_000): Promise<GpsFix> {

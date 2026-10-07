@@ -55,6 +55,16 @@ async function ready(page) {
 }
 
 const settled = (page) => page.waitForFunction(() => !window.__fw.map.isMoving(), null, { timeout: 15_000 });
+/** Hold a finger on the map at a screen point, through the browser's own touch input, then pick
+ *  a line of the spot's menu. */
+async function holdAndPick(page, { x, y }, item) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+  await page.waitForTimeout(700);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.locator('.spot-menu button', { hasText: item }).tap();
+}
+
 
 // How many route vertices fall outside the part of the map the panel leaves visible (above the
 // bottom sheet on a phone, right of the card on a wide screen)?
@@ -247,9 +257,9 @@ async function drag(page, selector, dy) {
     check('gps: start becomes "Your location" with its accuracy', /Your location · ±(25 m|80 ft)/.test(await page.locator('#fromInput').inputValue()));
     check('gps: a location dot is drawn', (await page.locator('.gps-dot').count()) === 1);
     check('gps: the location is not written to the URL', !/from/.test(await page.evaluate(() => location.hash)), await page.evaluate(() => location.hash));
-    check('gps: next tap targets the destination', (await page.locator('#targetTo').getAttribute('data-target')) === 'true');
+    check('gps: the destination is next', (await page.locator('#targetTo').getAttribute('data-target')) === 'true');
     await settled(page);
-    // Tap a known road 0.3-1.5 km from the fix, inside the visible map (above the sheet).
+    // Hold a known road 0.3-1.5 km from the fix, inside the visible map (above the sheet).
     const dest = await page.evaluate((pts) => {
       const { map, state } = window.__fw;
       const [lon0, lat0] = state.from;
@@ -265,13 +275,13 @@ async function drag(page, selector, dy) {
       return null;
     }, roadPoints);
     check('gps: found a road point to use as the destination', Boolean(dest), JSON.stringify(dest));
-    await page.touchscreen.tap(dest.x, dest.y);
+    await holdAndPick(page, dest, 'Directions to here');
     await page.locator('.option').first().waitFor({ timeout: 20_000 }).catch(async () => {
       console.log('      notice:', await page.locator('#notice').innerText().catch(() => '(none)'));
     });
     await settled(page);
     const trip = await page.evaluate(() => ({ from: window.__fw.state.from, to: window.__fw.state.to, gps: window.__fw.state.fromGps, routes: window.__fw.state.routes?.length ?? 0 }));
-    check('gps: a destination tap routes from the current location', trip.gps && trip.to && trip.routes >= 1, JSON.stringify({ gps: trip.gps, routes: trip.routes }));
+    check('gps: a held destination routes from the current location', trip.gps && trip.to && trip.routes >= 1, JSON.stringify({ gps: trip.gps, routes: trip.routes }));
     await page.waitForTimeout(900); // let the route line paint and the framing settle
     const framedGps = await hidden(page);
     check('gps: the map frames the whole route above the sheet', framedGps.outside === 0, JSON.stringify(framedGps));

@@ -47,6 +47,16 @@ const camera = (page) => page.evaluate(() => {
   return { lon: c.lng, lat: c.lat, zoom: map.getZoom() };
 });
 const inBox = ([w, s, e, n], { lon, lat }) => lon >= w && lon <= e && lat >= s && lat <= n;
+/** Hold a finger on the map at a screen point, through the browser's own touch input, then pick
+ *  a line of the spot's menu. */
+async function holdAndPick(page, { x, y }, item) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+  await page.waitForTimeout(700);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.locator('.spot-menu button', { hasText: item }).tap();
+}
+
 /** Set at the start: a reload would lose it. */
 const stillSamePage = (page) => page.evaluate(() => window.__sameVisit === true);
 
@@ -127,7 +137,7 @@ const stillSamePage = (page) => page.evaluate(() => window.__sameVisit === true)
     await page.evaluate(([lon, lat]) => window.__fw.map.jumpTo({ center: [lon, lat], zoom: 12 }), [dallas.bbox[2] - 0.05, dallas.center[1]]);
     await waitArea(page, 'Dallas, TX');
     await ready(page);
-    // Now a destination west of Dallas, by tap, with the map still on Dallas: it fits in Fort Worth only.
+    // Now a destination west of Dallas, held, with the map still on Dallas: it fits in Fort Worth only.
     const edge = [dallas.bbox[0] + 0.01, westOfDallas[1]];
     const target = [dallas.bbox[0] - 0.1, westOfDallas[1]];
     const tap = await page.evaluate(([c, t]) => {
@@ -137,8 +147,7 @@ const stillSamePage = (page) => page.evaluate(() => window.__sameVisit === true)
     }, [edge, target]);
     await page.waitForTimeout(900);
     check('a map still centred on Dallas keeps Dallas', (await areaName(page)) === 'Dallas, TX');
-    await page.evaluate(() => { window.__fw.state.target = 'to'; });
-    await page.touchscreen.tap(tap.x, tap.y);
+    await holdAndPick(page, tap, 'Directions to here');
     await page.locator('#noticeAction').waitFor({ timeout: 10_000 });
     const notice = await page.locator('#notice').innerText();
     check('a destination outside the area offers the one it fits in', /outside the Dallas area/.test(notice) && /Fort Worth/.test(notice), notice);

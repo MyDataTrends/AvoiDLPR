@@ -928,6 +928,93 @@ a:focus-visible {
   color: #2563eb;
 }
 
+/* Holding the map shouldn't select anything or bring up the phone's own long-press menu. */
+#map {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* A held spot's menu (main.ts, openSpot): white like the camera popups, rows a finger's height. */
+.spot-popup .maplibregl-popup-content {
+  padding: 12px 8px 8px;
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow);
+}
+
+.spot-menu {
+  display: grid;
+  gap: 2px;
+  min-width: 240px;
+  color: #222222;
+  font-size: 15px;
+}
+
+.spot-title {
+  padding: 0 36px 6px 8px;
+  font-weight: 600;
+}
+
+/* The popups' close button, a fair target for a finger. */
+@media (pointer: coarse) {
+  .maplibregl-popup-close-button {
+    width: 40px;
+    height: 40px;
+    font-size: 22px;
+  }
+}
+
+.spot-item {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 0 10px;
+  align-items: center;
+  min-height: 44px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.spot-item:hover,
+.spot-item:focus-visible {
+  background: #f2f2f2;
+}
+
+.spot-item svg {
+  grid-row: span 2;
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.spot-detail {
+  grid-column: 2;
+  color: #6a6a6a;
+  font-size: 13px;
+}
+
+.spot-guide {
+  margin: 4px 0 0;
+  padding: 6px 8px 0;
+  border-top: 1px solid #ebebeb;
+  color: #6a6a6a;
+  font-size: 13px;
+}
+
+.spot-guide a {
+  color: #2563eb;
+}
+
 /* ---------- the menu ---------- */
 
 dialog {
