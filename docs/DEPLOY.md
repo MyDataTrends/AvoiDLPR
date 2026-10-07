@@ -22,7 +22,7 @@ hosting is free-tier friendly and there's nothing to keep running.
 | Piece | Where | What it is |
 |---|---|---|
 | The app | Cloudflare Worker (static files only) | `apps/web`, built by Vite: about 2 MB of HTML, JS and CSS, plus the service worker and the headers file |
-| The data | Cloudflare R2 bucket | For each of 135 US metro areas: a gzipped road pack (1 to 13 MB), a search index of its addresses and places (a few MB), a Protomaps basemap extract (20 to 120 MB) and a camera feed refreshed hourly; plus fonts and sprites. About 7 GB in all, described by `regions.json` |
+| The data | Cloudflare R2 bucket | A Protomaps basemap of the whole lower 48 (about 16 GB, to zoom 15) and, for each of 135 US metro areas, a gzipped road pack (1 to 13 MB), a search index of its addresses and places (a few MB) and a camera feed refreshed hourly; plus fonts and sprites. About 17 GB in all, described by `regions.json` |
 | Data refresh | GitHub Actions | `build-data` (monthly) and `refresh-cameras` (hourly) |
 
 The app fetches `regions.json` first, and everything else is named in it, so adding a city is a
@@ -162,7 +162,7 @@ and the same build command and variables.)
 | App redeploy | every push to `main` | Cloudflare (Workers Builds) |
 | Camera feeds refreshed from DeFlock | hourly | `refresh-cameras.yml` |
 | Roads updated, changed areas' packs checked and republished | nightly (07:30 UTC) | `build-data.yml` (roads) |
-| Road packs, search indexes and basemaps rebuilt from fresh downloads | monthly (the 3rd), or on demand | `build-data.yml` (full) |
+| Road packs, search indexes and the country's basemap rebuilt from fresh downloads | monthly (the 3rd), or on demand | `build-data.yml` (full) |
 | Superseded road packs, search indexes and basemaps deleted | daily (05:00 UTC), a day after they're replaced | `refresh-cameras.yml` |
 
 Notes:
@@ -199,9 +199,9 @@ Notes:
 | | Limit | Why it's comfortable |
 |---|---|---|
 | Workers static files | 25 MiB per file, 20,000 files, requests for static files free | The app is about 2 MB; big files live in R2 |
-| R2 | 10 GB stored, 1M writes and 10M reads a month, **no egress fees** | The data is about 7 GB, and the daily cleanup keeps one copy. The hourly feeds are about 100,000 writes a month. A map tile is one read; rough guess a few hundred per session, so tens of thousands of sessions a month before reads cost anything (about $0.36 per million after) |
+| R2 | 10 GB stored, 1M writes and 10M reads a month, **no egress fees** | The data is about 17 GB, most of it the country's basemap, so storage costs about 10 cents a month past the free 10 GB ($0.015 per GB-month); the daily cleanup keeps one copy. The hourly feeds are about 100,000 writes a month. A map tile is one read; rough guess a few hundred per session, so tens of thousands of sessions a month before reads cost anything (about $0.36 per million after). One 16 GB file is too big for Cloudflare's cache (512 MB a file on the free plan), so every tile is a read; split it into smaller pieces if that ever adds up |
 | GitHub Actions | Free for public repositories | An hourly job of about a minute, a nightly road update, and a monthly build of about four hours of runner time (40 minutes on the clock; the search indexes add about a minute an area) |
-| Geofabrik, Protomaps | Free downloads, fair use | The monthly build fetches each state once (about 10 GB) and cuts each basemap out of Protomaps' daily planet build; the nightly update only fetches Geofabrik's daily change files |
+| Geofabrik, Protomaps | Free downloads, fair use | The monthly build fetches each state once (about 10 GB) and cuts the country's basemap out of Protomaps' daily planet build (about 17 GB, on the runner's second disk); the nightly update only fetches Geofabrik's daily change files |
 
 These are from public pricing pages in October 2026 and change; check before relying on them.
 
@@ -217,9 +217,9 @@ fresh downloads, new basemaps, and a correction for anything the nightly updates
    (a few MB a day per state) from the exact sequence it holds, applies them with pyosmium and
    filters again. A state with no cached copy, or changes the server no longer has, starts again
    from a fresh download.
-2. **Rebuild the packs, not the basemaps.** Every area's road pack is rebuilt from the updated
-   roads. Basemaps are cosmetic and search indexes change slowly, so both stay monthly (a
-   brand-new area gets a basemap).
+2. **Rebuild the packs, not the basemap.** Every area's road pack is rebuilt from the updated
+   roads. The basemap is cosmetic and search indexes change slowly, so both stay monthly (a
+   brand-new area is already on the country's basemap).
 3. **Same roads, same file.** A pack carries a fingerprint of its routing content (the graph,
    not the build date). A rebuild with the live fingerprint is *unchanged*: nothing is uploaded
    and phones keep what they have.
@@ -280,9 +280,10 @@ fresh downloads, new basemaps, and a correction for anything the nightly updates
 
 - The data workflows have been dry-run on GitHub (the monthly build, and the nightly update both
   from a fresh download and rolling cached roads forward) but have never published to a bucket.
-- Areas are separate maps: a trip from one to another (Charlotte to Raleigh) can't be planned
-  unless one area holds both ends. Neighbouring areas overlap so most trips inside a metro work;
-  routing across the country would need the road network in tiles, loaded along the way.
+- The map covers the country, but routing works one area at a time: a trip from one to another
+  (Charlotte to Raleigh) can't be planned unless one area holds both ends. Neighbouring areas
+  overlap so most trips inside a metro work; routing across the country would need the road
+  network in tiles, loaded along the way.
 - Live navigation needs the app open with the screen on: phones pause web pages in the
   background. There are no turn-by-turn directions yet, just the route line and camera alerts.
 - Search knows what OpenStreetMap knows. House numbers are thorough in some counties and sparse

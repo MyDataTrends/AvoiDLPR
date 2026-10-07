@@ -64,11 +64,11 @@ is a good place to learn more.
    background. (**Preview** plays the trip back on the map in about 30 seconds, to see where
    the zones are.)
 
-AvoiDLPR works one metro area at a time: the first time you open it, it asks where you drive (or
-finds your area from your location) and downloads that area's road map and its list of addresses
-and places, a few megabytes. To plan a trip, type where you're going (an address, a street, or a
-place like a store, a stadium or the airport) or tap it on the map, and start from your current
-location or anywhere else.
+The map covers the whole lower 48, and routing works in 135 metro areas, one at a time. Zoom in on
+yours, search for it by name, or tap the locate button, and that area's road map and its list of
+addresses and places download, a few megabytes. To plan a trip, type where you're going (an
+address, a street, or a place like a store, a stadium or the airport) or tap it on the map, and
+start from your current location or anywhere else.
 
 It works like the map apps you already know: **Where to?**, pick a route, **Start**. It follows
 your phone's light or dark mode (or pick one in the menu), and you're the little car on the map:
@@ -141,7 +141,8 @@ cover anywhere the cameras are mapped.
 ## For developers
 
 AvoiDLPR is a static website plus static data files: no server, no database. A Python pipeline
-turns OpenStreetMap and DeFlock data into a compact road file and a search index for each city.
+turns OpenStreetMap and DeFlock data into a compact road file and a search index for each city,
+and one map of the whole country.
 The app is TypeScript: MapLibre GL with a self-hosted Protomaps basemap, and its own router and
 search, which run in Web Workers on your phone. The code still uses the project's working name,
 FlockWatch.
