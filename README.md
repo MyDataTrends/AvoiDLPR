@@ -9,7 +9,7 @@ phone's browser, installs to your home screen like an app, and never sends your 
 destination or your searches anywhere.
 
 <p align="center">
-  <img src="docs/images/desktop.jpg" width="900" alt="AvoiDLPR on a laptop. A trip across Dallas has four route options in a card over the map, from the fastest (26 minutes, through 6 camera zones) to the one with the fewest cameras (28 minutes, through none). The recommended one, 27 minutes through 1 zone, is selected and drawn in blue. Each camera is drawn on the map as an arrow showing which way it points.">
+  <img src="docs/images/desktop.jpg" width="900" alt="AvoiDLPR on a laptop. A trip across Dallas has four route options in a card over the map, from the fastest (26 minutes, through 6 camera zones and near 3 more cameras) to the one with the fewest cameras (29 minutes, through none and near none). The recommended one, 27 minutes through 1 zone, is selected and drawn in blue. Each camera is drawn on the map as an arrow showing which way it points.">
 </p>
 
 > **Status:** built for 135 US metro areas, from New York to Los Angeles and Charlotte to
@@ -38,7 +38,7 @@ is a good place to learn more.
   &nbsp;
   <img src="docs/images/phone-search.jpg" width="200" alt="Searching on a phone: the search fills the screen. The start is 'Your location', and typing 'fair park' as the destination lists Fair Park's station and neighborhood, the Music Hall at Fair Park and other matches, each with what it is, its town and how far away it is.">
   &nbsp;
-  <img src="docs/images/phone-routes.jpg" width="200" alt="On a phone: the trip's route options in a sheet under the map, with the fewest-cameras option (28 minutes, no camera zones) selected and a Start button at the top of the sheet.">
+  <img src="docs/images/phone-routes.jpg" width="200" alt="On a phone: the trip's route options in a sheet under the map, with the fewest-cameras option (29 minutes, no camera zones) selected and a Start button at the top of the sheet.">
   &nbsp;
   <img src="docs/images/phone-drive.jpg" width="200" alt="Previewing the drive on a phone in dark mode: the little car drives the route on a dark map, and a red banner reads 'In a camera zone: Flock Safety, reads plates heading N' as it passes a camera.">
 </p>
@@ -50,10 +50,13 @@ is a good place to learn more.
    cameras read rear plates, so they only log cars driving away from them, in one direction.
    When the map says which way a camera points, AvoiDLPR only counts it against routes that
    drive through its view in that direction. When it doesn't, AvoiDLPR assumes the camera can
-   see every road around it.
+   see every road around it. Around each zone, a wider, fainter ring marks where a camera may
+   still see you: some models reach further than the one Flock publishes a range for, and
+   oncoming cars show their fronts. Routes go around rings when that costs almost nothing, and
+   the app tells you when you're in one.
 3. **Route options.** For each trip you get the fastest route plus up to three others that
-   trade a few minutes for fewer camera zones, each labelled with its time and its number of
-   zones. The one marked *Recommended* avoids the most zones while adding no more than about
+   trade a few minutes for fewer camera zones, each labelled with its time, its number of
+   zones and how many cameras it passes near. The one marked *Recommended* avoids the most zones while adding no more than about
    10% to the trip. You pick.
 4. **Drive.** Tap **Start** and AvoiDLPR follows your phone's GPS along the route: a warning
    before each camera zone, a banner and a chime while you're in one, and a new route if you
@@ -95,10 +98,18 @@ publishes it. Every camera in the app links to its OpenStreetMap entry.
 ## Questions
 
 **Is this legal?** Choosing your route is. AvoiDLPR doesn't interfere with cameras and doesn't
-hide your plate. Don't cover or alter your plate either: that's illegal in most states.
+hide your plate. Don't cover or alter your plate either: that's illegal in most states, and it
+doesn't help, because Flock also logs each car's make, model, color and features like roof racks
+and bumper stickers.
 
 **Does "0 camera zones" mean nobody saw me?** No. It means the route passes no *mapped*
 cameras. Many cameras aren't mapped yet, and readers mounted on police cars move around.
+
+**How far away can a camera see me?** Flock says its standard camera reads plates up to about 75
+feet away. AvoiDLPR's zones reach about twice that, allowing for cameras mapped a little off their
+real spot, and each has a ring beyond it where a camera may still see you. Flock also sells
+long-range and zoom cameras with no published range, and the camera map doesn't say which model is
+which, so the rings matter.
 
 **Why does the recommended route still pass a camera?** Sometimes there's no reasonable way
 around one. AvoiDLPR shows you the options and lets you decide.
