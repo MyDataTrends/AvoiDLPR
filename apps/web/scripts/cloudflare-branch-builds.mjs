@@ -10,8 +10,8 @@
 // way to make one). Asked to do anything else (a `deploy`, if this ever ran where it shouldn't), it
 // fails the build instead of quietly not deploying.
 //
-// To use Cloudflare's previews again, delete this script and its call in the root package.json;
-// to stop the branch builds instead, Settings > Build > Branch control in the Worker's dashboard.
+// To use Cloudflare's previews again, delete this script and its call in the root package.json
+// (and find out first why `wrangler preview` fails for this Worker).
 import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
