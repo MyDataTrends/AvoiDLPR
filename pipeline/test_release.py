@@ -446,6 +446,15 @@ def test_report_puts_failures_first_and_totals_the_bucket(tmp_path):
     assert "| 3 |" in table[3] and "(z15)" in table[3] and "| 4.0 |" in table[3]
 
 
+def test_report_lists_areas_whose_roads_werent_updated(tmp_path):
+    from pipeline.report import render
+
+    rows = [{"id": "boston", "name": "Boston", "batch": "northeast", "ok": True, "status": "unchanged",
+             "stale": ["north-america/us/massachusetts"]}]
+    md = render([{"batch": "northeast", "mode": "roads", "regions": rows}], None, tmp_path)
+    assert "### Roads not updated" in md and "- **boston**: massachusetts" in md
+
+
 def test_check_regions_finds_states_a_region_reaches_into():
     from shapely.geometry import box
 

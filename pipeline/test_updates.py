@@ -116,6 +116,61 @@ def test_update_without_a_copy_or_with_changes_gone_starts_fresh(tmp_path):
     assert calls[0][0] == "curl"  # the server no longer has the changes from 4001: download again
 
 
+class FlakyServer(FakeServer):
+    """A replication server that doesn't answer the first `misses` times it's asked where it's got to."""
+
+    def __init__(self, latest, misses):
+        super().__init__(latest)
+        self.misses = misses
+
+    def get_state_info(self, seq=None):
+        if self.misses:
+            self.misses -= 1
+            return None
+        return super().get_state_info(seq)
+
+
+def test_a_server_that_doesnt_answer_is_asked_again_then_given_up_on(tmp_path):
+    calls, waits = [], []
+    roads.fresh(NC, tmp_path, copying_runner(calls))
+    state, changed = roads.update(NC, tmp_path, copying_runner(calls), server=FlakyServer(4003, misses=2), sleep=waits.append)
+    assert changed and state["sequence"] == 4003 and waits == list(roads.STATE_RETRY_S[:2])
+    waits.clear()
+    with pytest.raises(roads.Unreachable):
+        roads.update(NC, tmp_path, copying_runner(calls), server=FlakyServer(4009, misses=99), sleep=waits.append)
+    assert waits == list(roads.STATE_RETRY_S)
+    assert roads.read_state(tmp_path, NC)["sequence"] == 4003  # the roads stay as they were
+
+
+def test_a_state_that_wont_answer_keeps_its_roads_and_the_batch_carries_on(tmp_path):
+    grid = write_pbf(tmp_path / "grid.osm.pbf")
+
+    def run(cmd):  # osmium writes the grid
+        cmd = [str(c) for c in cmd]
+        if "-o" in cmd:
+            shutil.copy(grid, cmd[cmd.index("-o") + 1])
+
+    def updater(path, work, run, rewind=0):
+        if path == SC:
+            raise roads.Unreachable(f"{path}: can't read the replication state at https://example/sc-updates")
+        return {"timestamp": "2026-10-09T20:00:00Z"}, True
+
+    def decider(region_id, pack, live, *, mode, now):
+        from pipeline.decide import Decision
+        return Decision("unchanged", "test")
+
+    work = tmp_path / "work"
+    (work / "roads").mkdir(parents=True)
+    roads.write_state(work, SC, {"server": "https://example/sc-updates", "sequence": 4000, "timestamp": "2026-10-08T20:00:00Z"})
+    a = Region("a", "A", (0, 0, 1, 1), (NC, SC))
+    b = Region("b", "B", (0, 0, 1, 1), (NC,))
+    report = build_batch.build_batch([a, b], work, tmp_path / "data", run=run, mode="roads", basemaps=False,
+                                     live={"regions": [{"id": "a"}, {"id": "b"}]}, decider=decider, updater=updater)
+    assert all(r["ok"] for r in report)  # one state's server down doesn't sink the batch
+    assert report[0]["stale"] == [SC] and "stale" not in report[1]
+    assert report[0]["osm_at"] == "2026-10-08T20:00:00Z"  # as current as its stalest state
+
+
 # ---------- what to publish ----------
 
 def grid_pack(tmp_path, name="new.fwr", built_at="2026-10-10T07:00:00+00:00"):

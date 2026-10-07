@@ -74,6 +74,10 @@ def render(reports: list[dict], manifest: dict | None, release: Path) -> str:
     held = [r for r in rows if r.get("status") == "hold"]
     if held:
         out += ["### Held back (the live pack stays)", ""] + [f"- **{r['id']}**: {r.get('why', '?')}" for r in held] + [""]
+    stale = [r for r in rows if r.get("stale")]
+    if stale:
+        out += ["### Roads not updated (the change server didn't answer; the last update's roads stay)", ""]
+        out += [f"- **{r['id']}**: {', '.join(g.rsplit('/', 1)[-1] for g in r['stale'])}" for r in stale] + [""]
     unsearchable = [r for r in rows if r.get("places_error")]
     if unsearchable:
         out += ["### Search index not built (the live one stays)", ""]
