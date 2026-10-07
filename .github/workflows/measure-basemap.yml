@@ -1,0 +1,65 @@
+# How big a basemap of the whole lower 48 would be, at each top zoom: dry runs of `pmtiles
+# extract` against Protomaps' newest planet build. A dry run reads only the planet's tile index,
+# not the tiles, and nothing is uploaded. The numbers decide how much street detail a US-wide map
+# can afford (one file instead of the 135 metro extracts). Runs on pull requests that change it,
+# or from the Actions tab.
+name: Measure a US basemap
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/measure-basemap.yml
+      - pipeline/us_outline.py
+
+permissions:
+  contents: read
+
+env:
+  PMTILES_VERSION: "1.31.2"
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - run: pip install -r requirements.txt
+
+      # As in build-data.yml: the official CLI, held to PMTILES_SHA256 when that's set.
+      - name: Install the pmtiles CLI
+        run: |
+          set -e
+          url="https://github.com/protomaps/go-pmtiles/releases/download/v${PMTILES_VERSION}/go-pmtiles_${PMTILES_VERSION}_Linux_x86_64.tar.gz"
+          curl -fL --retry 3 -o pmtiles.tar.gz "$url"
+          actual="$(sha256sum pmtiles.tar.gz | cut -d' ' -f1)"
+          echo "pmtiles ${PMTILES_VERSION} sha256: $actual"
+          if [ -n "${{ vars.PMTILES_SHA256 }}" ] && [ "$actual" != "${{ vars.PMTILES_SHA256 }}" ]; then
+            echo "::error::pmtiles checksum mismatch"; exit 1
+          fi
+          mkdir -p "$HOME/bin" && tar -xzf pmtiles.tar.gz -C "$HOME/bin" pmtiles
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: The lower 48's outline
+        run: python -m pipeline.us_outline --out lower48.geojson
+
+      - name: Dry runs at each top zoom
+        run: |
+          set -eo pipefail
+          build="$(curl -sfL -m 60 https://build-metadata.protomaps.dev/builds.json \
+            | python -c 'import json, re, sys; print(max(b["key"] for b in json.load(sys.stdin) if re.fullmatch(r"\d{8}\.pmtiles", b["key"])))')"
+          {
+            echo "## A basemap of the lower 48"
+            echo "Protomaps planet build \`$build\`. For comparison, the 135 metro basemaps total about 6.1 GB today."
+          } >> "$GITHUB_STEP_SUMMARY"
+          for z in 15 14 13 12; do
+            pmtiles extract "https://build.protomaps.com/$build" us.pmtiles --region=lower48.geojson --maxzoom=$z --dry-run 2>&1 | tee "dry-$z.txt"
+            { echo "### Up to zoom $z"; echo '```'; tail -n 4 "dry-$z.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          done
