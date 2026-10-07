@@ -336,6 +336,94 @@ def test_prune_deletes_what_no_manifest_has_named_for_a_day():
     assert "packs/a.old.fwr.gz" in stale_keys(manifest, listing, now=soon, min_age_hours=24)
 
 
+LOWER48 = [-126.76, 24.18, -66.85, 49.43]
+
+
+def _fake_pmtiles(path, bbox, maxzoom=15):
+    """A PMTiles v3 header (127 bytes) with these bounds and top zoom, and a little tile data."""
+    import struct
+
+    head = b"PMTiles" + bytes([3]) + bytes(88) + bytes([1, 2, 2, 1, 0, maxzoom])
+    head += struct.pack("<iiii", *(round(v * 1e7) for v in bbox)) + bytes([4]) + struct.pack("<ii", 0, 0)
+    assert len(head) == 127
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(head + b"tiles")
+
+
+def test_the_country_basemap_is_named_once_and_used_by_every_region(data_dir, tmp_path):
+    _fake_pmtiles(data_dir / "basemap" / "us.pmtiles", LOWER48)
+    out = tmp_path / "release"
+    manifest = stage_release(data_dir, out, [DALLAS])
+    b = manifest["basemap"]
+    assert b["path"].startswith("basemap/us.") and b["path"].endswith(".pmtiles")
+    assert b["bbox"] == LOWER48 and b["maxzoom"] == 15 and b["bytes"] == (out / b["path"]).stat().st_size
+    assert manifest["regions"][0]["basemap"] == b  # an app from before reads it as its area's
+    assert not list((out / "basemap").glob("dallas.*.pmtiles"))  # the area's own isn't staged
+
+
+def test_a_national_build_from_the_command_line(data_dir, tmp_path, monkeypatch):
+    from pipeline import release
+
+    out = tmp_path / "release"
+    monkeypatch.setattr(release, "load_regions", lambda: [DALLAS])
+    (data_dir / "basemap" / "dallas.pmtiles").unlink()  # the build jobs don't cut one any more
+    args = ["--data", str(data_dir), "--out", str(out)]
+    assert release.main([*args, "--part", "texas", "--region", "dallas", "--national"]) == 0
+    assert "basemap" not in json.loads((out / "parts" / "texas.json").read_text())["regions"][0]  # filled in later
+    with pytest.raises(FileNotFoundError):
+        release.main([*args, "--basemap"])  # not built yet
+    _fake_pmtiles(data_dir / "basemap" / "us.pmtiles", LOWER48)
+    assert release.main([*args, "--basemap"]) == 0
+    (out / "cameras").mkdir()
+    (out / "cameras" / "dallas.json").write_text("{}")
+    assert release.main([*args, "--assemble", "--live", str(tmp_path / "none.json")]) == 0
+    manifest = json.loads((out / "regions.json").read_text())
+    assert manifest["basemap"]["path"].startswith("basemap/us.")
+    assert manifest["regions"][0]["basemap"] == manifest["basemap"]
+
+
+def test_assemble_keeps_the_live_country_basemap_and_needs_some_basemap(tmp_path):
+    from pipeline.release import assemble
+
+    regions = [Region(i, i.title(), (0, 0, 1, 1), ("x",)) for i in ("a", "b")]
+    out = tmp_path / "release"
+    (out / "cameras").mkdir(parents=True)
+    for rid in ("a", "b"):
+        (out / "cameras" / f"{rid}.json").write_text("{}")
+    country = {"path": "basemap/us.live.pmtiles", "bytes": 16e9, "sha256": "x", "maxzoom": 15, "bbox": LOWER48}
+    bare = {k: v for k, v in _entry("b").items() if k != "basemap"}  # a new area, built for the country's basemap
+    m = assemble(out, regions, [bare], {"schema": SCHEMA, "basemap": country, "regions": [_entry("a")]})
+    assert m["basemap"] == country and [e["basemap"] for e in m["regions"]] == [country, country]
+    m = assemble(out, regions, [bare], {"schema": SCHEMA, "regions": [_entry("a")]})  # no country basemap anywhere
+    assert "basemap" not in m and [e["id"] for e in m["regions"]] == ["a"]  # nothing to draw b with
+
+
+def test_prune_keeps_the_country_basemap_and_drops_the_areas_old_ones():
+    import datetime as dt
+
+    from pipeline.prune import parse_listing, stale_keys
+
+    country = {"path": "basemap/us.new.pmtiles", "bytes": 1}
+    manifest = {"generated_at": "2026-10-01T00:00:00+00:00", "basemap": country,
+                "regions": [_entry("a") | {"basemap": country}]}
+    listing = parse_listing("basemap/us.new.pmtiles\t2026-09-30T00:00:00.000Z\n"
+                            "basemap/a.new.pmtiles\t2026-09-01T00:00:00.000Z\n")
+    assert stale_keys(manifest, listing, now=dt.datetime(2026, 10, 3, tzinfo=dt.UTC), min_age_hours=24) == [
+        "basemap/a.new.pmtiles"]
+
+
+def test_report_counts_the_country_basemap_once(tmp_path):
+    from pipeline.report import render
+
+    country = {"path": "basemap/us.x.pmtiles", "bytes": 16e9, "maxzoom": 15}
+    regions = [_entry(rid) | {"name": rid.upper(), "pack": {"path": f"p{rid}", "bytes": 1e8, "edges": 1},
+                              "basemap": country} for rid in ("a", "b")]
+    md = render([{"batch": "x", "regions": []}], {"basemap": country, "regions": regions}, tmp_path)
+    assert "16.20 GB (0.20 GB road packs, 16.00 GB basemaps" in md
+    assert "6.20 GB over the 10 GB free tier, about $0.09 a month" in md
+    assert "the lower 48 in one file, 16.0 GB to zoom 15" in md
+
+
 def test_report_puts_failures_first_and_totals_the_bucket(tmp_path):
     from pipeline.report import render
 

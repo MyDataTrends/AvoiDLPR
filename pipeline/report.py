@@ -18,6 +18,8 @@ from pathlib import Path
 from .build_batch import WARN_EDGES
 
 FREE_TIER_GB = 10
+#: R2's price per GB-month past the free tier (October 2026).
+PRICE_PER_GB_MONTH = 0.015
 
 
 def mb(n: float | None) -> str:
@@ -47,14 +49,22 @@ def render(reports: list[dict], manifest: dict | None, release: Path) -> str:
     out = [f"## {kind}: {len(rows) - len(failed)} of {len(rows)} regions built" + (f" ({tally})" if tally else ""), ""]
     if manifest:
         packs = sum(e["pack"]["bytes"] for e in listed.values())
-        basemaps = sum(e["basemap"]["bytes"] for e in listed.values())
+        # Each file once: with the country's basemap, every region names the same one.
+        basemaps = sum(b["bytes"] for b in {e["basemap"]["path"]: e["basemap"] for e in listed.values()}.values())
         search = sum((e.get("places") or {}).get("bytes", 0) for e in listed.values())
         heaviest = max(listed.values(), key=lambda e: e["pack"]["bytes"], default=None)
+        total = (packs + basemaps + search) / 1e9
+        over = total - FREE_TIER_GB
+        tier = (f"{over:.2f} GB over the {FREE_TIER_GB} GB free tier, about ${over * PRICE_PER_GB_MONTH:.2f} a month"
+                if over > 0 else f"of the {FREE_TIER_GB} GB free tier")
         out += [
             f"- **Published regions:** {len(listed)} ({sum(1 for e in listed.values() if e.get('places'))} with search)",
-            f"- **Bucket size:** {(packs + basemaps + search) / 1e9:.2f} GB ({packs / 1e9:.2f} GB road packs, "
-            f"{basemaps / 1e9:.2f} GB basemaps, {search / 1e9:.2f} GB search indexes) of the {FREE_TIER_GB} GB free tier",
+            f"- **Bucket size:** {total:.2f} GB ({packs / 1e9:.2f} GB road packs, "
+            f"{basemaps / 1e9:.2f} GB basemaps, {search / 1e9:.2f} GB search indexes), {tier}",
         ]
+        if manifest.get("basemap"):
+            b = manifest["basemap"]
+            out.append(f"- **Basemap:** the lower 48 in one file, {b['bytes'] / 1e9:.1f} GB to zoom {b.get('maxzoom')}")
         if heaviest:
             out.append(f"- **Biggest download:** {heaviest['name']}, {mb(heaviest['pack']['bytes'])} MB gzipped "
                        f"({heaviest['pack']['edges']:,} road edges)")
@@ -86,7 +96,7 @@ def render(reports: list[dict], manifest: dict | None, release: Path) -> str:
         if r.get("edges", 0) > WARN_EDGES:
             edges = f"**{edges}**"
         gz = mb(e["pack"]["bytes"]) if e else ""
-        zoom = f" (z{e['basemap']['maxzoom']})" if e and e["basemap"].get("maxzoom") is not None else ""
+        zoom = f" (z{e['basemap']['maxzoom']})" if e and r.get("basemap_bytes") and e["basemap"].get("maxzoom") is not None else ""
         status = "" if r["ok"] else " ❌"
         search = mb(e["places"]["bytes"]) if e and e.get("places") else ""
         out.append(f"| {r['name']}{status} | {outcome(r)} | {r['batch']} | {edges} | {gz} | "

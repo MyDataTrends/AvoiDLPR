@@ -2,14 +2,17 @@ name: Build map data
 
 # One pipeline, two schedules:
 #
-#   monthly  (the 3rd, 06:00 UTC)  full: every state downloaded fresh, every road pack, basemap and
-#                                  search index rebuilt; the baseline that corrects any drift.
+#   monthly  (the 3rd, 06:00 UTC)  full: every state downloaded fresh, every road pack and search
+#                                  index rebuilt, and the basemap; the baseline that corrects any drift.
 #   nightly  (07:30 UTC)           roads: each state's cached roads rolled forward with Geofabrik's
-#                                  daily changes (a few MB), road packs rebuilt, basemaps and search
+#                                  daily changes (a few MB), road packs rebuilt, the basemap and search
 #                                  indexes left.
 #
 #   plan     checks every region lists the states it reaches into (pipeline/check_regions.py)
 #            and splits the regions into batches of neighbouring states (pipeline/plan.py).
+#   basemap  (full mode) the map of the whole lower 48 at zoom 15, about 16 GB in one file, cut out
+#            of Protomaps' newest planet build on the runner's second disk and uploaded under a new
+#            content-hashed name. Every region uses it; regions have no basemaps of their own.
 #   build    one job per batch, in parallel. Builds its regions and decides, region by region,
 #            whether the new pack replaces the live one (pipeline/decide.py): unchanged (same
 #            fingerprint), published, deferred (a small change to a recent pack, so phones don't
@@ -42,6 +45,10 @@ on:
         default: full
       publish:
         description: "Upload to the bucket (untick for a dry run)"
+        type: boolean
+        default: true
+      basemap:
+        description: "full mode: cut the basemap of the whole country too (about 16 GB, 20+ minutes)"
         type: boolean
         default: true
       rewind:
@@ -137,22 +144,6 @@ jobs:
           pip install -r requirements.txt
           osmium --version | head -1
 
-      # The official Protomaps CLI cuts a region's tiles out of the planet build with range
-      # requests. It publishes no checksum file, so the hash is printed on every run; set the
-      # PMTILES_SHA256 repository variable to that value to make the job refuse any other file.
-      - name: Install the pmtiles CLI
-        run: |
-          set -e
-          url="https://github.com/protomaps/go-pmtiles/releases/download/v${PMTILES_VERSION}/go-pmtiles_${PMTILES_VERSION}_Linux_x86_64.tar.gz"
-          curl -fL --retry 3 -o pmtiles.tar.gz "$url"
-          actual="$(sha256sum pmtiles.tar.gz | cut -d' ' -f1)"
-          echo "pmtiles ${PMTILES_VERSION} sha256: $actual"
-          if [ -n "${{ vars.PMTILES_SHA256 }}" ] && [ "$actual" != "${{ vars.PMTILES_SHA256 }}" ]; then
-            echo "::error::pmtiles checksum mismatch"; exit 1
-          fi
-          mkdir -p "$HOME/bin" && tar -xzf pmtiles.tar.gz -C "$HOME/bin" pmtiles
-          echo "$HOME/bin" >> "$GITHUB_PATH"
-
       # What's online decides what's new, unchanged or worth replacing.
       - name: Download the live manifest
         if: needs.plan.outputs.bucket == 'success'
@@ -177,7 +168,7 @@ jobs:
           REWIND: ${{ inputs.rewind }}
         run: |
           args=""; for id in $REGIONS; do args="$args --region $id"; done
-          python -m pipeline.build_batch "$BATCH" $args --mode "$MODE" --rewind "${REWIND:-0}" \
+          python -m pipeline.build_batch "$BATCH" $args --mode "$MODE" --rewind "${REWIND:-0}" --no-basemap \
             --live live/regions.json --report "reports/$BATCH.json"
 
       - name: Save the roads for the next nightly update
@@ -194,10 +185,10 @@ jobs:
           REGIONS: ${{ join(matrix.regions, ' ') }}
         run: |
           args=""; for id in $REGIONS; do args="$args --region $id"; done
-          python -m pipeline.release --part "$BATCH" $args --live live/regions.json
+          python -m pipeline.release --part "$BATCH" $args --live live/regions.json --national
           du -sh release/packs release/basemap release/places 2>/dev/null || true
 
-      - name: Upload the new packs, basemaps and search indexes (new names, so nothing live changes yet)
+      - name: Upload the new packs and search indexes (new names, so nothing live changes yet)
         if: env.PUBLISH == 'true'
         run: |
           set -e
@@ -222,8 +213,81 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  basemap:
+    needs: plan
+    if: >-
+      needs.plan.result == 'success' && github.event.schedule != '30 7 * * *'
+      && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' && inputs.basemap))
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - run: pip install -r requirements.txt
+
+      # The official Protomaps CLI cuts the country's tiles out of the planet build with range
+      # requests. It publishes no checksum file, so the hash is printed on every run; set the
+      # PMTILES_SHA256 repository variable to that value to make the job refuse any other file.
+      - name: Install the pmtiles CLI
+        run: |
+          set -e
+          url="https://github.com/protomaps/go-pmtiles/releases/download/v${PMTILES_VERSION}/go-pmtiles_${PMTILES_VERSION}_Linux_x86_64.tar.gz"
+          curl -fL --retry 3 -o pmtiles.tar.gz "$url"
+          actual="$(sha256sum pmtiles.tar.gz | cut -d' ' -f1)"
+          echo "pmtiles ${PMTILES_VERSION} sha256: $actual"
+          if [ -n "${{ vars.PMTILES_SHA256 }}" ] && [ "$actual" != "${{ vars.PMTILES_SHA256 }}" ]; then
+            echo "::error::pmtiles checksum mismatch"; exit 1
+          fi
+          mkdir -p "$HOME/bin" && tar -xzf pmtiles.tar.gz -C "$HOME/bin" pmtiles
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      # 16 GB doesn't fit beside the runner's system; its second disk, /mnt, has the room. The
+      # staged copy is a hard link on the same disk, not a second 16 GB.
+      - name: Work on the second disk
+        run: |
+          df -h / /mnt
+          sudo mkdir -p /mnt/fw/data /mnt/fw/release
+          sudo chown -R "$(id -u):$(id -g)" /mnt/fw
+          ln -s /mnt/fw/data data
+
+      - name: The lower 48's outline
+        run: python -m pipeline.us_outline --out lower48.geojson
+
+      - name: Cut the basemap
+        run: node apps/web/scripts/fetch-basemap.mjs --us --outline lower48.geojson
+
+      - name: Stage it
+        run: |
+          python -m pipeline.release --basemap --out /mnt/fw/release
+          ls -l /mnt/fw/release/basemap
+          df -h /mnt
+
+      - name: Upload it (a new name, so nothing live changes yet)
+        if: env.PUBLISH == 'true'
+        run: |
+          aws configure set default.s3.multipart_chunksize 64MB
+          aws s3 cp /mnt/fw/release/basemap "s3://$R2_BUCKET/basemap" --recursive --endpoint-url "$R2_ENDPOINT" \
+            --only-show-errors --cache-control "public, max-age=31536000, immutable"
+
+      # Its manifest entry, for publish (a single file: it lands at the artifact's root).
+      - uses: actions/upload-artifact@v7
+        with:
+          name: basemap-part
+          path: /mnt/fw/release/parts/basemap.json
+          retention-days: 14
+
   publish:
-    needs: [plan, build]
+    needs: [plan, build, basemap]
     # Runs when some batches failed too: their regions keep the files that are online now.
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-latest
@@ -248,6 +312,13 @@ jobs:
           pattern: part-*
           merge-multiple: true
           path: built
+
+      # The country's basemap, when this run cut one; otherwise the live manifest's stays.
+      - uses: actions/download-artifact@v8
+        if: needs.basemap.result == 'success'
+        with:
+          name: basemap-part
+          path: built/release/parts
 
       - name: Fonts and sprites
         run: node apps/web/scripts/fetch-basemap.mjs --assets-only
@@ -290,5 +361,5 @@ jobs:
             $aws release/regions.json "s3://$R2_BUCKET/regions.json" --content-type application/json --cache-control "public, max-age=0, must-revalidate"
             echo "Published $(python -c "import json; print(len(json.load(open('release/regions.json'))['regions']))") regions." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "No road pack or basemap changed, so regions.json stays as it is." >> "$GITHUB_STEP_SUMMARY"
+            echo "No road pack, search index or basemap changed, so regions.json stays as it is." >> "$GITHUB_STEP_SUMMARY"
           fi
