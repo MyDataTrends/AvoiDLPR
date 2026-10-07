@@ -75,19 +75,34 @@ export function mapStyle(urls: BasemapUrls, dark: boolean): StyleSpecification {
   };
 }
 
-export function createMap(container: HTMLElement, bbox: [number, number, number, number], urls: BasemapUrls,
-  dark: boolean): MapLibreMap {
+export type Bbox = [number, number, number, number];
+
+export type Fence = [[number, number], [number, number]];
+
+/**
+ * How far the map can be moved: the box with room round it, `room` of its size on each side (at
+ * least a little). An area gets a tenth; the country gets a lot more, mostly so a tall phone
+ * screen can show all of it at once (the map can't zoom out past what the fence holds).
+ */
+export function fence(bbox: Bbox, room = 0.1): Fence {
+  const [w, s, e, n] = bbox;
+  const dx = Math.max(0.2, (e - w) * room), dy = Math.max(0.15, (n - s) * room);
+  return [[Math.max(-180, w - dx), Math.max(-85, s - dy)], [Math.min(180, e + dx), Math.min(85, n + dy)]];
+}
+
+/** A map showing `view`, kept inside `limit` (see `fence`). */
+export function createMap(container: HTMLElement, view: Bbox, limit: Fence, urls: BasemapUrls, dark: boolean): MapLibreMap {
   if (!protocolRegistered) {
     setWorkerUrl(maplibreWorkerUrl);
     addProtocol("pmtiles", new Protocol().tile);
     protocolRegistered = true;
   }
-  const [w, s, e, n] = bbox;
+  const [w, s, e, n] = view;
   return new MapLibreMap({
     container,
     style: mapStyle(urls, dark),
     bounds: [[w, s], [e, n]],
-    maxBounds: [[w - 0.2, s - 0.15], [e + 0.2, n + 0.15]],
+    maxBounds: limit,
     attributionControl: { compact: true },
   });
 }

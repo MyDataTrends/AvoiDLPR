@@ -6,12 +6,12 @@ import { type LngLat, LngLatBounds, Marker, Popup } from "maplibre-gl";
 
 import { Chooser, type PickHow } from "./chooser.ts";
 import {
-  dataUrl, inBbox, initialRegion, loadManifest, type RegionEntry, regionLabel, regionsContaining, rememberRegion,
+  areaMatches, dataUrl, inBbox, initialRegion, loadManifest, type RegionEntry, regionLabel, regionsContaining, rememberRegion,
 } from "./data.ts";
 import { type Fix, Polyline } from "./drive.ts";
 import { accuracy, cameraZones, distance, duration, extraTime, nearCameras, siteTitle, watches } from "./format.ts";
 import { insideBox, LocateError, locate } from "./location.ts";
-import { type BasemapUrls, type CameraState, createMap, mapStyle, Overlays } from "./map.ts";
+import { type BasemapUrls, type Bbox, type CameraState, createMap, fence, mapStyle, Overlays } from "./map.ts";
 import { type Ride, RIDES, rideSvg, savedRide, saveRide } from "./personas.ts";
 import type { CameraDTO, LonLat, ProfileName, Request, Response, RouteDTO, SiteDTO, Stats } from "./protocol.ts";
 import { type PlacesFile, type Stop, StopSearch } from "./search.ts";
@@ -73,7 +73,7 @@ function applyTheme(): void {
 }
 applyTheme(); // first thing: the page shouldn't flash the wrong colours
 
-// ---------- boot: what data exists, and which region to show ----------
+// ---------- boot: what data exists, and which area to show ----------
 
 function showBootFailure(err: unknown): never {
   const message = err instanceof Error ? err.message : String(err);
@@ -99,33 +99,49 @@ if (import.meta.env.PROD && "serviceWorker" in navigator && window.isSecureConte
   });
 }
 
-/** Set when the area was picked from the device's location: find it again once the new area loads. */
-const LOCATE_AFTER_SWITCH = "avoidlpr.locate";
-
 const manifest = await loadManifest().catch(showBootFailure);
+/**
+ * The basemap of the whole country, if the data has one. Then the map isn't fenced into an area,
+ * and areas load as you go (see `followMap`); without one, each area has its own basemap.
+ */
+const national = manifest.basemap ?? null;
+/** While the first area is being picked, before anything else exists, the chooser answers here. */
+let bootPick: ((r: RegionEntry, how: PickHow) => void) | null = null;
 const chooser = new Chooser(manifest, (r: RegionEntry, how: PickHow) => {
-  if (r.id === picked?.id) {
-    chooser.close();
-    if (how === "location") void useMyLocation();
+  if (bootPick) {
+    bootPick(r, how);
     return;
   }
-  switchRegion(r, { locate: how === "location" });
+  chooser.close();
+  if (r.id !== region?.id) enterRegion(r, { fit: true });
+  if (how === "location") void useMyLocation();
 });
-const picked = initialRegion(manifest);
-if (!picked) {
-  // First visit: nothing to show until an area is picked, and picking one reloads the page.
+/** The area whose roads, cameras and search index are loaded (or loading); none yet is possible with the country's basemap. */
+let region: RegionEntry | null = initialRegion(manifest);
+let locateAtStart = false;
+if (!region && !national) {
+  // First visit, with a basemap per area: there's no map to show until an area is picked.
   setStatus("Choose an area to start.");
   $("summary").textContent = "Choose your area";
   chooser.open({ required: true });
-  await new Promise<never>(() => {});
+  [region, locateAtStart] = await new Promise<[RegionEntry, boolean]>((resolve) => {
+    bootPick = (r, how) => resolve([r, how === "location"]);
+  });
+  bootPick = null;
+  chooser.close(true);
 }
-const region: RegionEntry = picked!;
-rememberRegion(region.id);
-document.title = `AvoiDLPR · ${region.name}`;
-$("example").hidden = !region.example;
-$("regionName").textContent = regionLabel(region);
-$("areaSection").hidden = manifest.regions.length < 2;
-setStatus(`Loading the ${region.name} road network…`);
+syncRegionUi();
+if (region) setStatus(`Loading the ${region.name} road network…`);
+
+/** The area's name and the controls that need one: the page title, the menu, the sample trip and quick searches. */
+function syncRegionUi(): void {
+  if (region) rememberRegion(region.id);
+  document.title = region ? `AvoiDLPR · ${region.name}` : "AvoiDLPR";
+  $("regionName").textContent = region ? regionLabel(region) : "None yet";
+  $("areaSection").hidden = manifest.regions.length < 2;
+  $("example").hidden = !region?.example;
+  $("chips").hidden = !region; // the sample trip and the quick searches are an area's
+}
 
 /** What a stop is called, when it's more than a point. */
 interface Named {
@@ -216,14 +232,16 @@ const state = {
 const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
 const send = (msg: Request) => worker.postMessage(msg);
 const basemap: BasemapUrls = {
-  pmtiles: dataUrl(region.basemap.path),
+  pmtiles: dataUrl((national ?? region!.basemap).path),
   glyphs: dataUrl(manifest.assets.glyphs),
   sprite: dataUrl(manifest.assets.sprite),
   spriteDark: manifest.assets.sprite_dark ? dataUrl(manifest.assets.sprite_dark) : undefined,
 };
 /** Whether the map's current style is the dark one. */
 let mapDark = isDark();
-const map = createMap($("mapwrap").querySelector("#map")!, region.bbox, basemap, mapDark);
+/** Where the map may go: round the country, or with a basemap per area, the area. */
+const mapLimit = national ? fence(national.bbox, 1.5) : fence(region!.bbox);
+const map = createMap($("mapwrap").querySelector("#map")!, region?.bbox ?? national!.bbox, mapLimit, basemap, mapDark);
 let overlays: Overlays | null = null;
 // When the camera moves on, MapLibre cancels the tile requests it no longer needs, and some browsers
 // report a cancelled fetch as "Failed to fetch". Those aren't failures: ignore errors that arrive
@@ -332,14 +350,17 @@ function setStops(p: {
  */
 function offerAreaForTrip(): boolean {
   const pins = [state.from, state.to].filter((p): p is LonLat => p !== null);
-  if (pins.every(([lon, lat]) => inBbox(region.bbox, lon, lat))) return false;
+  const here = region;
+  if (!pins.length || (here && pins.every(([lon, lat]) => inBbox(here.bbox, lon, lat)))) return false;
   const there = regionsContaining(manifest, ...pins)[0];
-  if (there) {
-    offer(`That's outside the ${region.name} area, but the whole trip fits in ${there.name}.`, `Open ${there.name}`,
-      () => switchRegion(there, { from: state.fromGps ? null : state.from, to: state.to, locate: Boolean(state.fromGps) }));
+  if (there && !here) {
+    enterRegion(there); // no area loaded, so nothing to lose: just go
+  } else if (there) {
+    offer(`That's outside the ${here!.name} area, but the whole trip fits in ${there.name}.`, `Open ${there.name}`,
+      () => enterRegion(there));
   } else {
-    offer(`That's outside the ${region.name} area. AvoiDLPR plans trips inside one area at a time.`, "See the areas",
-      () => chooser.open({ current: region.id }));
+    offer(here ? `That's outside the ${here.name} area. AvoiDLPR plans trips inside one area at a time.`
+      : "AvoiDLPR doesn't cover that spot yet.", "See the areas", () => chooser.open({ current: here?.id }));
   }
   return true;
 }
@@ -354,36 +375,35 @@ function offer(text: string, label: string, run: () => void): void {
 }
 
 /**
- * Open another area. It's remembered on this device and the page reloads into it. Pins that
- * came from taps travel in the link; a GPS start never does: it's looked up again after the load.
+ * Make `r` the area whose roads, cameras and search index are loaded, in place: no reload. It's
+ * remembered on this device. The trip keeps its ends that are inside the new area. With the
+ * country's basemap the map stays where it is (unless `fit`); with a basemap per area it swaps to
+ * the new area's and moves there.
  */
-function switchRegion(r: RegionEntry, opts: { from?: LonLat | null; to?: LonLat | null; locate?: boolean } = {}): void {
-  rememberRegion(r.id);
-  const p = new URLSearchParams();
-  if (opts.from) p.set("from", opts.from.map((v) => v.toFixed(5)).join(","));
-  if (opts.to) p.set("to", opts.to.map((v) => v.toFixed(5)).join(","));
-  p.set("r", r.id); // in case this browser can't remember: the reload still knows where to go
-  if (opts.locate) setFlag(LOCATE_AFTER_SWITCH);
-  history.replaceState(null, "", `${location.pathname}${location.search}#${p}`);
-  location.reload();
-}
-
-function setFlag(key: string): void {
-  try {
-    sessionStorage.setItem(key, "1");
-  } catch {
-    /* storage blocked: the user taps the location button themselves */
+function enterRegion(r: RegionEntry, opts: { fit?: boolean } = {}): void {
+  stopDrive();
+  stopNav();
+  region = r;
+  syncRegionUi();
+  const inside = (p: LonLat | null) => Boolean(p && inBbox(r.bbox, p[0], p[1]));
+  if (!inside(state.from)) Object.assign(state, { from: null, fromGps: null, names: { ...state.names, from: null } });
+  if (!inside(state.to)) Object.assign(state, { to: null, names: { ...state.names, to: null } });
+  state.target = state.from ? "to" : "from";
+  state.fitNext = Boolean(state.from && state.to);
+  Object.assign(state, { stats: null, progress: null, routes: null, cameras: [], notice: null, noticeAction: null });
+  delete document.documentElement.dataset.ready;
+  setStatus(`Loading the ${r.name} road network…`);
+  const base = dataUrl((national ?? r.basemap).path);
+  if (base !== basemap.pmtiles) {
+    basemap.pmtiles = base;
+    map.setStyle(mapStyle(basemap, mapDark), { diff: false }); // the overlays go back on with it
   }
-}
-
-function takeFlag(key: string): boolean {
-  try {
-    const set = sessionStorage.getItem(key) === "1";
-    sessionStorage.removeItem(key);
-    return set;
-  } catch {
-    return false;
-  }
+  if (!national) map.setMaxBounds(fence(r.bbox));
+  if (opts.fit || !national) map.fitBounds(r.bbox, { duration: 0 });
+  loadPack(r);
+  search.setFile(placesFile(r));
+  writeHash();
+  render();
 }
 
 function requestRoute(): void {
@@ -398,9 +418,12 @@ function requestRoute(): void {
 
 worker.onmessage = (ev: MessageEvent<Response>) => {
   const msg = ev.data;
+  // An area left before its road map came in: what's still arriving for it doesn't count.
+  if ((msg.type === "progress" || msg.type === "ready" || (msg.type === "error" && msg.id !== undefined)) && msg.id !== loadId) return;
   if (msg.type === "progress") {
     state.progress = msg;
     $("summary").textContent = summary();
+    if (!$("loadStatus").hidden) $("loadStatus").textContent = summary();
   } else if (msg.type === "ready") {
     state.progress = null;
     state.stats = msg.stats;
@@ -514,6 +537,7 @@ function summary(): string {
     const zones = nav.route.sites.filter((s) => s.untilM > nav.lastDistM).length;
     return `${duration(nav.route.timeS * (left / Math.max(1, nav.line.lengthM)))} · ${distance(left)} · ${cameraZones(zones)} ahead`;
   }
+  if (!region) return "Zoom in on a city, or search for one";
   if (!state.stats) {
     const p = state.progress;
     if (p?.unpacking) return `Unpacking the ${region.name} road map…`;
@@ -1040,10 +1064,10 @@ document.addEventListener("visibilitychange", () => {
 // decoded. Until then the service worker holds on to the last one that did, and the worker falls
 // back to it, so a bad download never leaves an area without a map.
 
-/** The area's manifest entry as loaded now (it changes when a new pack is swapped in). */
-let current: RegionEntry = region;
-/** Updates found during a trip wait for it to end. */
-const pending = { pack: null as RegionEntry | null, reload: false };
+/** Updates found during a trip wait for it to end: a new pack or search index, or a new basemap. */
+const pending = { pack: null as RegionEntry | null, basemap: null as string | null };
+/** Numbers each area load, so what arrives for one that's been left can be told apart. */
+let loadId = 0;
 const CHECK_EVERY_MS = 30 * 60_000;
 let checkedAt = Date.now();
 let lastPackUrl = "";
@@ -1061,7 +1085,7 @@ function lastGoodPack(id: string): { path: string; sha256?: string } | null {
 function loadPack(entry: RegionEntry): void {
   const good = lastGoodPack(entry.id);
   send({
-    type: "load", packUrl: dataUrl(entry.pack.path), packBytes: entry.pack.bytes, packSha256: entry.pack.sha256,
+    type: "load", id: ++loadId, packUrl: dataUrl(entry.pack.path), packBytes: entry.pack.bytes, packSha256: entry.pack.sha256,
     camerasUrl: dataUrl(entry.cameras.path), profile: state.profile,
     fallback: good && good.path !== entry.pack.path ? { url: dataUrl(good.path), sha256: good.sha256 } : null,
   });
@@ -1077,7 +1101,7 @@ function packLoaded(pack: { url: string; fellBack: boolean; failed?: string }): 
     return;
   }
   try {
-    localStorage.setItem(packKey(current.id), JSON.stringify({ path: current.pack.path, sha256: current.pack.sha256 }));
+    if (region) localStorage.setItem(packKey(region.id), JSON.stringify({ path: region.pack.path, sha256: region.pack.sha256 }));
   } catch {
     /* storage blocked: there's just no fallback next time */
   }
@@ -1098,37 +1122,40 @@ async function checkForUpdates(force = false): Promise<void> {
   } catch {
     return; // offline, or the host is down: try again next time
   }
-  const entry = latest.regions.find((r) => r.id === current.id);
-  if (entry && entry.basemap.path !== current.basemap.path) pending.reload = true;
-  else if (entry && (entry.pack.path !== current.pack.path || entry.places?.path !== current.places?.path)) pending.pack = entry;
-  if (state.stats) send({ type: "cameras", camerasUrl: dataUrl(current.cameras.path) });
+  const here = region;
+  const entry = here && latest.regions.find((r) => r.id === here.id);
+  const base = latest.basemap ?? entry?.basemap;
+  if (base && dataUrl(base.path) !== basemap.pmtiles) pending.basemap = dataUrl(base.path);
+  if (here && entry && (entry.pack.path !== here.pack.path || entry.places?.path !== here.places?.path)) pending.pack = entry;
+  if (here && state.stats) send({ type: "cameras", camerasUrl: dataUrl(here.cameras.path) });
   applyUpdates();
 }
 
 /** Swap in what checkForUpdates found, if no trip is being driven or previewed. */
 function applyUpdates(): void {
   if (state.nav || state.drive) return;
-  if (pending.reload) {
-    location.reload(); // a new basemap: the map's tile source is set at start-up
-    return;
+  if (pending.basemap) {
+    basemap.pmtiles = pending.basemap;
+    pending.basemap = null;
+    map.setStyle(mapStyle(basemap, mapDark), { diff: false }); // the overlays go back on with it
   }
-  if (pending.pack) {
-    const next = pending.pack;
-    pending.pack = null;
-    const newPack = next.pack.path !== current.pack.path, newPlaces = next.places?.path !== current.places?.path;
-    current = next;
+  if (pending.pack && pending.pack.id === region?.id) {
+    const next = pending.pack, was = region;
+    const newPack = next.pack.path !== was.pack.path, newPlaces = next.places?.path !== was.places?.path;
+    region = next;
     if (newPlaces) {
-      search.setFile(placesFile(current));
+      search.setFile(placesFile(next));
       search.load();
     }
     if (newPack) {
       state.stats = null;
       delete document.documentElement.dataset.ready;
       state.routes = null;
-      loadPack(current);
+      loadPack(next);
       render();
     }
   }
+  pending.pack = null;
 }
 
 function renderFreshness(s: Stats): void {
@@ -1166,18 +1193,28 @@ async function useMyLocation(): Promise<void> {
   render();
   try {
     const fix = await locate();
-    if (state.stats && !insideBox(state.stats.bbox, fix.lon, fix.lat)) {
+    const start = () => setStops({ from: [fix.lon, fix.lat], gps: { accuracyM: fix.accuracyM } });
+    const here = region;
+    const outside = here ? !inBbox(here.bbox, fix.lon, fix.lat) || Boolean(state.stats && !insideBox(state.stats.bbox, fix.lon, fix.lat)) : true;
+    if (outside) {
       const there = regionsContaining(manifest, [fix.lon, fix.lat])[0];
-      if (there) {
-        offer(`You're in the ${there.name} area, not ${region.name}.`, `Switch to ${there.name}`,
-          () => switchRegion(there, { locate: true, to: state.to && inBbox(there.bbox, ...state.to) ? state.to : null }));
+      if (there && !here) {
+        enterRegion(there); // no area loaded yet: yours, then
+        map.easeTo({ center: [fix.lon, fix.lat], zoom: 13 });
+        start();
+      } else if (there) {
+        offer(`You're in the ${there.name} area, not ${here!.name}.`, `Switch to ${there.name}`, () => {
+          enterRegion(there);
+          start();
+          if (!state.to) map.easeTo({ center: [fix.lon, fix.lat], zoom: Math.max(map.getZoom(), 13) });
+        });
       } else {
-        offer(`You're outside the ${region.name} area, and outside every area AvoiDLPR covers so far.`,
-          "See the areas", () => chooser.open({ current: region.id }));
+        offer(here ? `You're outside the ${here.name} area, and outside every area AvoiDLPR covers so far.`
+          : "You're outside every area AvoiDLPR covers so far.", "See the areas", () => chooser.open({ current: here?.id }));
       }
       return;
     }
-    setStops({ from: [fix.lon, fix.lat], gps: { accuracyM: fix.accuracyM } });
+    start();
     if (fix.accuracyM > 200) state.notice = `Your location is approximate (${accuracy(fix.accuracyM)}).`;
     render();
     if (!state.to) map.easeTo({ center: [fix.lon, fix.lat], zoom: Math.max(map.getZoom(), 14) });
@@ -1257,7 +1294,14 @@ const search = new StopSearch({ from: $<HTMLInputElement>("fromInput"), to: $<HT
     const c = map.getCenter();
     return [c.lng, c.lat];
   },
-  bbox: () => region.bbox,
+  bbox: () => region?.bbox ?? national?.bbox ?? [-180, -90, 180, 90],
+  area: () => region?.name ?? null,
+  areas: (q) => manifest.regions.filter((r) => r.id !== region?.id && areaMatches(r, q)).slice(0, 4)
+    .map((r) => ({ area: r.id, name: r.name, detail: `Area · ${r.states.join("–") || r.group}` })),
+  pickedArea: (id) => {
+    const r = manifest.regions.find((x) => x.id === id);
+    if (r) enterRegion(r, { fit: true });
+  },
   label: stopLabel,
   placeholder: (stop) => (!state.to && stop === "to" ? "Where to?" : state.target === stop ? "Search, or tap the map" : "Search for a place"),
   here: () => void useMyLocation(),
@@ -1285,7 +1329,7 @@ const search = new StopSearch({ from: $<HTMLInputElement>("fromInput"), to: $<HT
     navigator.serviceWorker?.controller?.postMessage({ type: "pack-bad", url });
   },
 });
-search.setFile(placesFile(region));
+search.setFile(region && placesFile(region));
 // Back, in the phone search view. The press mustn't take focus from the field first: that would
 // close the view and leave the finger on whatever is under it.
 $("searchClose").addEventListener("pointerdown", (e) => e.preventDefault());
@@ -1315,7 +1359,7 @@ function writeHash(): void {
   if (state.profile !== "default") p.set("model", state.profile);
   // The area goes in only with pins, which say more than the area does: a link without them
   // shouldn't tell anyone which city you opened.
-  if (manifest.regions.length > 1 && (p.has("from") || p.has("to"))) p.set("r", region.id);
+  if (region && manifest.regions.length > 1 && (p.has("from") || p.has("to"))) p.set("r", region.id);
   history.replaceState(null, "", p.size ? `#${p}` : location.pathname + location.search);
 }
 
@@ -1356,8 +1400,29 @@ map.on("click", (e) => {
   }
   if (state.nav) return; // a stray tap mid-drive mustn't end the trip
   search.dismiss();
-  setStops({ [state.target]: [e.lngLat.lng, e.lngLat.lat] });
+  setStops({ [state.target]: [e.lngLat.lng, e.lngLat.lat] }); // outside the area, it offers (or goes to) one that fits
 });
+
+// ---------- areas load as you go (with the country's basemap) ----------
+//
+// Settle on a city with nothing planned and its roads, cameras and search index load: no
+// choosing first, no reload. A planned trip, a preview or a drive keep the area they're in.
+
+/** How close in the map has to be for the area in the middle of it to load: about a metro across. */
+const AREA_ZOOM = 9;
+let followTimer: ReturnType<typeof setTimeout> | undefined;
+map.on("moveend", () => {
+  clearTimeout(followTimer);
+  followTimer = setTimeout(followMap, 400);
+});
+
+function followMap(): void {
+  if (!national || state.to || state.drive || state.nav || map.getZoom() < AREA_ZOOM) return;
+  const { lng, lat } = map.getCenter();
+  if (region && inBbox(region.bbox, lng, lat)) return; // still in it (areas overlap at their edges)
+  const there = regionsContaining(manifest, [lng, lat])[0];
+  if (there) enterRegion(there);
+}
 for (const layer of ["fw-cameras", "fw-cameras-any", "fw-routes"]) {
   map.on("mouseenter", layer, () => { map.getCanvas().style.cursor = "pointer"; });
   map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; });
@@ -1376,7 +1441,7 @@ $("swap").addEventListener("click", () => {
   if (state.from || state.to) setStops({ from: state.to, to: state.from, names: { from: state.names.to, to: state.names.from } });
 });
 $("example").addEventListener("click", () => {
-  if (region.example) setStops({ from: region.example.from, to: region.example.to });
+  if (region?.example) setStops({ from: region.example.from, to: region.example.to });
 });
 $("clear").addEventListener("click", () => {
   setStops(state.fromGps ? { to: null } : { from: null, to: null }); // where you are stays where you are
@@ -1389,7 +1454,7 @@ $("drive").addEventListener("click", () => (state.drive ? stopDrive() : startDri
 for (const id of ["navigate", "headNav"]) $(id).addEventListener("click", () => (state.nav ? stopNav() : startNav()));
 $("regionBtn").addEventListener("click", () => {
   menu.close();
-  chooser.open({ current: region.id });
+  chooser.open({ current: region?.id });
 });
 $("noticeAction").addEventListener("click", () => state.noticeAction?.run());
 
@@ -1480,6 +1545,6 @@ window.addEventListener("appinstalled", () => void ($("install").hidden = true))
 
 readHash();
 writeHash(); // tidies the link: an area id with no pins in it isn't worth keeping in the URL
-loadPack(current);
+if (region) loadPack(region);
 render();
-if (takeFlag(LOCATE_AFTER_SWITCH)) void useMyLocation();
+if (locateAtStart) void useMyLocation();

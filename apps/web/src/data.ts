@@ -18,6 +18,16 @@ export function dataUrl(path: string): string {
   return DATA_BASE + path.replace(/^\/+/, "");
 }
 
+/** A Protomaps basemap: one tile archive, read in byte ranges. */
+export interface BasemapEntry {
+  path: string;
+  bytes: number;
+  sha256: string;
+  maxzoom?: number | null;
+  /** west, south, east, north: the country's has them. */
+  bbox?: [number, number, number, number];
+}
+
 export interface RegionEntry {
   id: string;
   name: string;
@@ -29,7 +39,8 @@ export interface RegionEntry {
   bbox: [number, number, number, number];
   center: [number, number];
   pack: { path: string; encoding?: "gzip"; bytes: number; raw_bytes?: number; sha256: string; built_at: string; edges?: number };
-  basemap: { path: string; bytes: number; sha256: string; maxzoom?: number | null };
+  /** Its own basemap, or (since there's been one) the whole country's, the same as the manifest's. */
+  basemap: BasemapEntry;
   cameras: { path: string };
   /** The search index (pipeline/places.py); an area built before search existed has none. */
   places?: {
@@ -45,6 +56,11 @@ export interface Manifest {
   generated_at: string;
   /** `sprite_dark`: the dark map's icons, in releases made since dark mode. */
   assets: { glyphs: string; sprite: string; sprite_dark?: string };
+  /**
+   * The basemap of the whole country (the lower 48), in releases made since there's been one. The
+   * map then isn't fenced into an area, and areas load as you go.
+   */
+  basemap?: BasemapEntry & { bbox: [number, number, number, number] };
   regions: RegionEntry[];
 }
 
@@ -130,6 +146,13 @@ export function regionsContaining(manifest: Manifest, ...points: [number, number
 export function kmTo(r: RegionEntry, lon: number, lat: number): number {
   const kx = 111.32 * Math.cos((lat * Math.PI) / 180);
   return Math.hypot((r.center[0] - lon) * kx, (r.center[1] - lat) * 111.32);
+}
+
+/** Whether every word typed is in an area's name, state or state codes ("worth", "nc", "fort worth tx"). */
+export function areaMatches(r: RegionEntry, query: string): boolean {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const text = `${r.name} ${r.group} ${r.states.join(" ")}`.toLowerCase();
+  return words.length > 0 && words.every((w) => text.includes(w));
 }
 
 /** "Charlotte, NC" or "Charlotte, NC–SC". */

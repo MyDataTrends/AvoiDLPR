@@ -1,6 +1,7 @@
 // The trip's two fields, From and To, are also search boxes. What's typed is matched against the
 // area's place index by the search worker, on this device: it never leaves the page. Picking a
-// result sets that end of the trip; the map still takes taps, for the field used last.
+// result sets that end of the trip; the map still takes taps, for the field used last. The other
+// areas AvoiDLPR covers are matched by name too ("Fort Worth"): picking one goes there.
 
 import { parseCoordinates, type PlaceResult } from "@flockwatch/router";
 
@@ -15,11 +16,23 @@ export interface PlacesFile {
   sha256?: string;
 }
 
+/** Another area AvoiDLPR covers, by name. */
+export interface AreaOption {
+  area: string;
+  name: string;
+  detail: string;
+}
+
 export interface SearchHooks {
   /** Where results should be near: the start if there is one, else the middle of the map. */
   near(): LonLat | null;
   /** The area's box, to read coordinates typed in either order. */
   bbox(): readonly [number, number, number, number];
+  /** The area loaded, if one is. */
+  area(): string | null;
+  /** Other areas whose names match what's typed. */
+  areas(query: string): AreaOption[];
+  pickedArea(id: string): void;
   /** What a field shows when nobody's typing in it ("Bean There", "Your location · ±25 m"). */
   label(stop: Stop): string;
   placeholder(stop: Stop): string;
@@ -39,14 +52,17 @@ export interface SearchHooks {
 /** How long typing has to pause before a search runs, in ms. */
 const DEBOUNCE_MS = 100;
 
-type Option = PlaceResult | "map" | "here";
+type Option = PlaceResult | AreaOption | "map" | "here";
 
-const ICONS: Record<PlaceResult["kind"] | "map" | "here", string> = {
+const isArea = (o: Option): o is AreaOption => typeof o === "object" && "area" in o;
+
+const ICONS: Record<PlaceResult["kind"] | "area" | "map" | "here", string> = {
   address: '<path d="M4 11l8-7 8 7M6 9.5V20h12V9.5"/>',
   street: '<path d="M8 3L5 21M16 3l3 18M12 4v3M12 10.5v3M12 17v3"/>',
   place: '<path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0113 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>',
   coordinates: '<circle cx="12" cy="12" r="6"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>',
   map: '<path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15M15 6v15"/>',
+  area: '<path d="M4 20V10l5-3v13M9 20V5l6 3v12M15 20V9l5-2v13M3 20h18"/>',
   here: '<circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="7.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
 };
 
@@ -244,6 +260,11 @@ export class StopSearch {
       this.hooks.here();
       return;
     }
+    if (isArea(option)) {
+      this.dismiss();
+      this.hooks.pickedArea(option.area);
+      return;
+    }
     this.hooks.picked(stop, option);
     this.dismiss();
   }
@@ -268,15 +289,18 @@ export class StopSearch {
     }
     const q = this.query.trim();
     const found = this.status === "ready" ? this.results : [this.coordinates()].filter((r): r is PlaceResult => r !== null);
+    const areas = q ? this.hooks.areas(q) : [];
     // Before anything's typed: "Your location" (for the start) and "Choose on the map".
-    this.options = q ? [...found, "map"] : stop === "from" ? ["here", "map"] : ["map"];
+    this.options = q ? [...areas, ...found, "map"] : stop === "from" ? ["here", "map"] : ["map"];
     const items: HTMLElement[] = [];
     let note = "";
-    if (q && this.status !== "ready") {
+    if (q && this.hooks.area() === null) {
+      if (!areas.length) note = `No area AvoiDLPR covers is called “${q}”. Zoom in on the map instead.`;
+    } else if (q && this.status !== "ready") {
       note = !this.file ? "Search isn't ready for this area yet: tap the map instead."
         : this.status === "failed" ? `Search couldn't load (${this.failure}). Tap the map instead.`
           : `Loading the search for this area…${this.progress ? ` ${this.progress}` : ""}`;
-    } else if (q && !found.length) {
+    } else if (q && !found.length && !areas.length) {
       note = `Nothing called “${q}” in this area.`;
     }
     if (note) {
@@ -301,7 +325,7 @@ export class StopSearch {
     li.setAttribute("role", "option");
     li.setAttribute("aria-selected", String(i === this.active));
     li.dataset.option = String(i);
-    const kind = typeof option === "string" ? option : option.kind;
+    const kind = typeof option === "string" ? option : isArea(option) ? "area" : option.kind;
     const icon = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[kind]}</svg>`;
     const name = document.createElement("span");
     name.className = "suggest-name";
@@ -314,6 +338,10 @@ export class StopSearch {
     } else if (option === "here") {
       name.textContent = "Your location";
       detail.textContent = "Start where you are";
+    } else if (isArea(option)) {
+      li.classList.add("suggest-area");
+      name.textContent = option.name;
+      detail.textContent = option.detail;
     } else {
       name.textContent = option.name;
       detail.textContent = [option.detail, option.distanceM !== undefined ? distance(option.distanceM) : ""]
