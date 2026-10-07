@@ -9,9 +9,10 @@ import {
   dataUrl, inBbox, initialRegion, loadManifest, type RegionEntry, regionLabel, regionsContaining, rememberRegion,
 } from "./data.ts";
 import { type Fix, Polyline } from "./drive.ts";
-import { accuracy, cameraZones, distance, duration, extraTime, gapTime, siteTitle, watches } from "./format.ts";
+import { accuracy, cameraZones, distance, duration, extraTime, siteTitle, watches } from "./format.ts";
 import { insideBox, LocateError, locate } from "./location.ts";
-import { type CameraState, createMap, Overlays } from "./map.ts";
+import { type BasemapUrls, type CameraState, createMap, mapStyle, Overlays } from "./map.ts";
+import { type Ride, RIDES, rideSvg, savedRide, saveRide } from "./personas.ts";
 import type { CameraDTO, LonLat, ProfileName, Request, Response, RouteDTO, SiteDTO, Stats } from "./protocol.ts";
 import { type PlacesFile, type Stop, StopSearch } from "./search.ts";
 import { Sheet } from "./sheet.ts";
@@ -22,8 +23,12 @@ const ALERT_AHEAD_M = 400;
 const MIN_ZONE_BANNER_MS = 1500;
 /** Tap tolerance (px) for picking another route off the map. */
 const ROUTE_TAP_SLOP_PX = 12;
-/** The router's cap on how much slower than the fastest an option may be. */
-const MAX_EXTRA_PERCENT = 50;
+/** A drive preview plays the whole route back in about this many seconds. */
+const PREVIEW_S = 30;
+/** And zooms out until the map scrolls under your ride no faster than this (px a second). */
+const PREVIEW_PX_S = 200;
+/** It glides to the start first, then sets off. */
+const PREVIEW_EASE_MS = 700;
 /**
  * How far from a place found by search to look for a road, in metres. A park's or an airport's
  * middle can be well back from any road; a tap on the map gets the router's usual distance.
@@ -31,6 +36,42 @@ const MAX_EXTRA_PERCENT = 50;
 const SEARCH_SNAP_M = 2500;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
+
+// ---------- appearance: light, dark, or the device's ----------
+//
+// "Auto" follows the device (the stylesheet's prefers-color-scheme rules), "Light" and "Dark" are
+// set on the root element. The map follows too: it gets the matching basemap style.
+
+type ThemeChoice = "auto" | "light" | "dark";
+const THEME_KEY = "avoidlpr.theme";
+const darkQuery = matchMedia("(prefers-color-scheme: dark)");
+
+function savedTheme(): ThemeChoice {
+  try {
+    const t = localStorage.getItem(THEME_KEY);
+    if (t === "light" || t === "dark") return t;
+  } catch {
+    /* storage blocked: follow the device */
+  }
+  return "auto";
+}
+
+let theme: ThemeChoice = savedTheme();
+const isDark = () => theme === "dark" || (theme === "auto" && darkQuery.matches);
+
+/** The browser's own bars, per scheme (index.html's theme-color tags). */
+const THEME_COLORS = { light: "#ffffff", dark: "#1f2023" } as const;
+
+function applyTheme(): void {
+  if (theme === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+  // A chosen theme colours the browser's bars whatever the device's scheme; Auto leaves it to the tags.
+  for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+    const scheme = meta.media.includes("dark") ? "dark" : "light";
+    meta.content = THEME_COLORS[theme === "auto" ? scheme : theme];
+  }
+}
+applyTheme(); // first thing: the page shouldn't flash the wrong colours
 
 // ---------- boot: what data exists, and which region to show ----------
 
@@ -81,10 +122,9 @@ if (!picked) {
 const region: RegionEntry = picked!;
 rememberRegion(region.id);
 document.title = `AvoiDLPR · ${region.name}`;
-$("lede").textContent = `Routes around license-plate cameras in the ${region.name} area. Everything is computed on this device: your start and destination never leave it.`;
 $("example").hidden = !region.example;
 $("regionName").textContent = regionLabel(region);
-$("regionBtn").hidden = manifest.regions.length < 2;
+$("areaSection").hidden = manifest.regions.length < 2;
 setStatus(`Loading the ${region.name} road network…`);
 
 /** What a stop is called, when it's more than a point. */
@@ -163,15 +203,21 @@ const state = {
   drive: null as Drive | null,
   nav: null as Nav | null,
   sheetBeforeDrive: null as "peek" | "half" | "full" | null,
+  /** Where the drive or the GPS has you while following a route (your ride is drawn there). */
+  car: null as Fix | null,
 };
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
 const send = (msg: Request) => worker.postMessage(msg);
-const map = createMap($("mapwrap").querySelector("#map")!, region.bbox, {
+const basemap: BasemapUrls = {
   pmtiles: dataUrl(region.basemap.path),
   glyphs: dataUrl(manifest.assets.glyphs),
   sprite: dataUrl(manifest.assets.sprite),
-});
+  spriteDark: manifest.assets.sprite_dark ? dataUrl(manifest.assets.sprite_dark) : undefined,
+};
+/** Whether the map's current style is the dark one. */
+let mapDark = isDark();
+const map = createMap($("mapwrap").querySelector("#map")!, region.bbox, basemap, mapDark);
 let overlays: Overlays | null = null;
 // When the camera moves on, MapLibre cancels the tile requests it no longer needs, and some browsers
 // report a cancelled fetch as "Failed to fetch". Those aren't failures: ignore errors that arrive
@@ -195,10 +241,11 @@ const sheet = new Sheet($("panel"), $("sheetHead"), $("handle"), (px) => {
 // Dev-only handle for poking at the page from the console and browser tests.
 if (import.meta.env.DEV) Object.assign(window, { __fw: { map, state, sheet, checkForUpdates } });
 
+let ride: Ride = savedRide();
 const markers = {
   from: pinMarker("#2f9e44", "from"),
-  to: pinMarker("#212529", "to"),
-  gps: new Marker({ element: gpsDot() }),
+  to: pinMarker("#222222", "to"),
+  you: new Marker({ element: youElement(), rotationAlignment: "map", pitchAlignment: "map" }),
 };
 
 function pinMarker(color: string, which: Stop): Marker {
@@ -210,12 +257,33 @@ function pinMarker(color: string, which: Stop): Marker {
   return m;
 }
 
-function gpsDot(): HTMLElement {
+/** You, on the map: your ride (personas.ts). */
+function youElement(): HTMLElement {
   const el = document.createElement("div");
-  el.className = "gps-dot";
+  el.className = "persona gps-dot";
   el.setAttribute("role", "img");
   el.setAttribute("aria-label", "Your location");
+  el.innerHTML = rideSvg(ride); // trusted markup, built from constants
   return el;
+}
+
+/** Your ride goes where the drive or the GPS has you while following a route, else to a GPS start. */
+function placeYou(): void {
+  const el = markers.you.getElement();
+  if (state.car) {
+    markers.you.setLngLat([state.car.lon, state.car.lat]).setRotation(state.car.heading).addTo(map);
+    el.classList.toggle("live", Boolean(state.nav));
+  } else if (state.from && state.fromGps) {
+    markers.you.setLngLat(state.from).setRotation(0).addTo(map);
+    el.classList.add("live");
+  } else {
+    markers.you.remove();
+  }
+}
+
+function showCar(fix: Fix | null): void {
+  state.car = fix;
+  placeYou();
 }
 
 // ---------- state changes ----------
@@ -333,6 +401,7 @@ worker.onmessage = (ev: MessageEvent<Response>) => {
     state.cameras = msg.cameras;
     state.zoneRangeM = msg.zone.rangeM;
     const s = msg.stats;
+    document.documentElement.dataset.ready = "true";
     setStatus(`${s.nodes.toLocaleString()} intersections · ${s.cameras.toLocaleString()} cameras · `
       + `${s.packMB.toFixed(0)} MB network loaded in ${(s.loadMs / 1000).toFixed(1)} s`);
     renderFreshness(s);
@@ -372,15 +441,6 @@ function selectedRoute(): RouteDTO | null {
   return state.routes?.[state.selected] ?? null;
 }
 
-const MID_COLORS = ["#7048e8", "#0c8599"];
-
-/** Fastest is orange and fewest-cameras blue; options in between take other hues. */
-function colorFor(i: number, n: number): string {
-  if (i === 0) return "#d9480f";
-  if (i === n - 1) return "#1c64f2";
-  return MID_COLORS[(i - 1) % MID_COLORS.length];
-}
-
 function labelFor(i: number, n: number): string {
   if (i === 0) return "Fastest";
   if (i === n - 1) return "Fewest cameras";
@@ -390,6 +450,7 @@ function labelFor(i: number, n: number): string {
 function render(): void {
   const routes = state.routes;
   const route = selectedRoute();
+  syncMode();
   renderStops();
   renderOverlays();
 
@@ -401,39 +462,36 @@ function render(): void {
   action.textContent = state.noticeAction?.label ?? "";
 
   $("summary").textContent = summary();
+  const loading = !state.stats;
+  $("loadStatus").hidden = !loading;
+  $("loadStatus").textContent = loading ? summary() : "";
   $("results").hidden = !(state.from && state.to);
   $<HTMLButtonElement>("drive").disabled = !route;
   syncNavButtons(Boolean(route));
   if (!routes || !route) {
-    $("options").replaceChildren();
-    $("routeNote").textContent = state.routing ? "Finding routes…" : "";
-    $("routeMeta").textContent = "";
+    $("options").replaceChildren(...(state.routing ? [placeholderCard("Finding routes…")] : []));
+    $("zones").hidden = true;
     $("alerts").replaceChildren();
     return;
   }
 
   const fastest = routes[0];
   $("options").replaceChildren(...routes.map((r, i) => optionCard(r, i, routes.length, fastest)));
-  const fs = fastest.sites.length, cs = route.sites.length;
-  $("routeNote").textContent = routes.length === 1
-    ? fs === 0
-      ? "The fastest route already passes no camera zones."
-      : `No route within ${MAX_EXTRA_PERCENT}% more time passes fewer than ${fs} camera zone${fs === 1 ? "" : "s"}.`
-    : state.selected === 0
-      ? "The quickest route. The other options trade time for fewer camera zones."
-      : `Avoids ${fs - cs} of the fastest route's ${fs} camera zone${fs === 1 ? "" : "s"} for ${gapTime(route.timeS - fastest.timeS)} more.`;
-  $("routeMeta").textContent = state.info
-    ? `Routed on this device in ${state.info.ms.toFixed(0)} ms (${state.info.probes} search${state.info.probes === 1 ? "" : "es"}).`
-    : "";
+  const n = route.sites.length;
+  $("zones").hidden = n === 0;
+  $("zonesSummary").textContent = `${cameraZones(n)} on this route`;
+  $("alerts").replaceChildren(...route.sites.map((s) => alertItem(s)));
+}
 
-  const items = route.sites.map((s) => alertItem(s));
-  if (!items.length) {
-    const li = document.createElement("li");
-    li.className = "empty";
-    li.textContent = "No camera zones on this route.";
-    items.push(li);
-  }
-  $("alerts").replaceChildren(...items);
+/** Idle (nothing planned: the "Where to?" pill) or trip (a destination: the route sheet or card). */
+function syncMode(): void {
+  const root = document.documentElement;
+  const mode = state.to ? "trip" : "idle";
+  if (root.dataset.mode === mode) return;
+  root.dataset.mode = mode;
+  // The sheet's heights depend on its head, which only shows in trip mode.
+  if (mode === "trip" && sheet.isSheet) sheet.set(sheet.state === "full" ? "half" : sheet.state);
+  else syncMapPadding(true);
 }
 
 function summary(): string {
@@ -451,9 +509,8 @@ function summary(): string {
     }
     return `Loading the ${region.name} road map…`;
   }
-  if (!state.from && !state.to) return "Search or tap the map to set a start";
-  if (!state.to) return "Where to? Search or tap the map";
-  if (!state.from) return "Search or tap the map to set your start";
+  if (!state.to) return "Where to?";
+  if (!state.from) return "Choose a start: search, or tap the map";
   if (state.routing) return "Finding routes…";
   const route = selectedRoute();
   if (route && state.routes) {
@@ -465,8 +522,8 @@ function summary(): string {
 function renderStops(): void {
   const place = (m: Marker, p: LonLat | null) => (p ? m.setLngLat(p).addTo(map) : m.remove());
   place(markers.from, state.from && !state.fromGps ? state.from : null);
-  place(markers.gps, state.from && state.fromGps ? state.from : null);
   place(markers.to, state.to);
+  placeYou();
   overlays?.setAccuracy(state.from && state.fromGps ? { lon: state.from[0], lat: state.from[1], ...state.fromGps } : null);
 
   $("targetFrom").dataset.target = String(state.target === "from");
@@ -487,38 +544,47 @@ function renderOverlays(): void {
   const chosen = new Set(selectedRoute()?.sites.map((s) => s.site));
   const stateOf = (site: number): CameraState => (chosen.has(site) ? "route" : fastest.has(site) ? "avoided" : "");
   overlays?.setCameras(state.cameras, { rangeM: state.zoneRangeM }, stateOf);
-  overlays?.setRoutes((routes ?? []).map((r, i) => ({
-    coordinates: r.coordinates, color: colorFor(i, routes!.length), selected: i === state.selected, index: i,
-  })));
+  overlays?.setRoutes((routes ?? []).map((r, i) => ({ coordinates: r.coordinates, selected: i === state.selected, index: i })));
 }
 
+/**
+ * A route option: its time and what it's for, what it costs against the fastest, and its camera
+ * zones in a badge (green when there are none).
+ */
 function optionCard(r: RouteDTO, i: number, n: number, fastest: RouteDTO): HTMLButtonElement {
   const card = document.createElement("button");
   card.type = "button";
   card.className = "option";
   card.setAttribute("aria-pressed", String(i === state.selected));
-  card.style.setProperty("--route", colorFor(i, n));
-  const parts: [string, string][] = [
-    ["label", labelFor(i, n)],
-    ["big", duration(r.timeS)],
-    ["small", [i > 0 ? extraTime(r.timeS - fastest.timeS) : "", distance(r.distanceM), cameraZones(r.sites.length)]
-      .filter(Boolean).join(" · ")],
-  ];
-  for (const [cls, text] of parts) {
-    const span = document.createElement("span");
-    span.className = cls;
-    span.textContent = text;
-    card.append(span);
-  }
+  const span = (cls: string, text: string) => {
+    const el = document.createElement("span");
+    el.className = cls;
+    el.textContent = text;
+    return el;
+  };
+  const time = span("time", duration(r.timeS));
+  time.append(span("label", n > 1 ? labelFor(i, n) : "Fastest"));
   if (n > 1 && i === state.recommended) {
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.textContent = "Recommended";
+    const chip = span("chip", "Recommended");
     chip.title = "Fewest cameras within 10% more time";
-    card.querySelector(".label")!.append(chip);
+    time.append(chip);
   }
+  const zones = r.sites.length;
+  card.append(
+    time,
+    span("meta", [i > 0 ? extraTime(r.timeS - fastest.timeS) : "", distance(r.distanceM)].filter(Boolean).join(" · ")),
+    span(zones ? "cams" : "cams none", zones ? cameraZones(zones) : "No camera zones"),
+  );
   card.addEventListener("click", () => selectRoute(i));
   return card;
+}
+
+/** Where the route options will be, while they're worked out. */
+function placeholderCard(text: string): HTMLElement {
+  const el = document.createElement("p");
+  el.className = "option-wait";
+  el.textContent = text;
+  return el;
 }
 
 /**
@@ -594,7 +660,11 @@ function setBanner(kind: "zone" | "ahead" | "clear" | null, title = "", detail =
  * top of it.
  */
 function viewPadding(): { top: number; left: number; right: number; bottom: number } {
-  return { top: 56, left: 0, right: 0, bottom: Math.min(sheetPx, window.innerHeight * 0.55) };
+  const trip = document.documentElement.dataset.mode === "trip";
+  // (Asked while the sheet is being made, too: so the screen's width, not `sheet`.)
+  if (!matchMedia("(max-width: 760px)").matches) return { top: 24, left: trip ? 432 : 0, right: 72, bottom: 24 }; // the card, the menu orb
+  // The pill and its quick searches at the top, or the route sheet at the bottom.
+  return { top: trip ? 72 : 136, left: 0, right: 0, bottom: trip ? Math.min(sheetPx, window.innerHeight * 0.55) : 0 };
 }
 
 function syncMapPadding(animate: boolean): void {
@@ -621,30 +691,43 @@ function startDrive(): void {
   if (!route || !state.stats) return;
   stopNav();
   const line = routeLine(route);
+  const speed = Math.min(64, Math.max(4, route.timeS / PREVIEW_S));
   state.drive = {
-    line, route, t0: performance.now(), speed: Number($<HTMLSelectElement>("speed").value), raf: 0, lastQuery: 0,
-    queryId: 0, inZone: [], zone: "", zoneUntil: 0, lastDistM: 0,
+    line, route, t0: performance.now() + PREVIEW_EASE_MS, speed, raf: 0,
+    lastQuery: 0, queryId: 0, inZone: [], zone: "", zoneUntil: 0, lastDistM: 0,
   };
-  $("drive").textContent = "Stop";
+  document.documentElement.dataset.following = "drive";
+  $("drive").textContent = "Stop preview";
   if (sheet.isSheet) {
     state.sheetBeforeDrive = sheet.state;
     sheet.set("peek");
   }
-  map.easeTo({ center: route.coordinates[0], zoom: 15.5, duration: 700 });
+  // The padding too: this cancels the sheet's own padding ease, just started.
+  map.easeTo({ center: route.coordinates[0], zoom: previewZoom(route, speed), padding: viewPadding(), duration: PREVIEW_EASE_MS });
   state.drive.raf = requestAnimationFrame(tick);
+}
+
+/** Close in for a short or slow trip, further out for a fast one, so the map can keep up. */
+function previewZoom(route: RouteDTO, speed: number): number {
+  const metresPerSecond = (route.distanceM / route.timeS) * speed;
+  const lat = route.coordinates[0][1];
+  const metresPerPxAtZoom0 = (40_075_016.686 * Math.cos((lat * Math.PI) / 180)) / 512;
+  return Math.min(15.5, Math.max(13, Math.log2((metresPerPxAtZoom0 * PREVIEW_PX_S) / metresPerSecond)));
 }
 
 function tick(now: number): void {
   const d = state.drive;
   if (!d) return;
   const metresPerSecond = d.route.distanceM / d.route.timeS;
-  const fix = d.line.at(((now - d.t0) / 1000) * d.speed * metresPerSecond);
-  overlays?.setCar(fix);
+  const fix = d.line.at((Math.max(0, now - d.t0) / 1000) * d.speed * metresPerSecond);
+  showCar(fix);
   if (now - d.lastQuery > 120) {
     d.lastQuery = now;
     send({ type: "capturing", id: ++d.queryId, lon: fix.lon, lat: fix.lat, heading: fix.heading });
   }
-  follow(fix);
+  // The map glides under your ride, which a playback is too quick to chase in steps the way live
+  // navigation does. While you move the map yourself it waits, then brings your ride back.
+  if (!map.isMoving()) map.jumpTo({ center: [fix.lon, fix.lat] });
   showDriveBanner(fix, d, now);
   if (fix.distM >= d.line.lengthM - 0.5) {
     const n = d.route.sites.length;
@@ -700,9 +783,10 @@ function stopDrive(message?: string): void {
   if (!d) return;
   cancelAnimationFrame(d.raf);
   state.drive = null;
-  overlays?.setCar(null);
+  delete document.documentElement.dataset.following;
+  showCar(null);
   queueMicrotask(applyUpdates);
-  $("drive").textContent = "Preview drive";
+  $("drive").textContent = "Preview";
   if (state.sheetBeforeDrive && sheet.isSheet) sheet.set(state.sheetBeforeDrive);
   state.sheetBeforeDrive = null;
   if (!message) {
@@ -761,6 +845,7 @@ function startNav(): void {
     enableHighAccuracy: true, maximumAge: 1000, timeout: 20_000,
   });
   void keepAwake(nav);
+  document.documentElement.dataset.following = "nav";
   syncNavButtons(true);
   if (sheet.isSheet) {
     state.sheetBeforeDrive = sheet.state;
@@ -791,7 +876,7 @@ function onNavFix(p: GeolocationPosition): void {
   const moving = nav.speedMps > 2 && heading !== null && Number.isFinite(heading);
   const fix: Fix = { lon, lat, heading: moving ? heading! : along.heading, distM: Math.max(m.distM, nav.lastDistM) };
   nav.at = [lon, lat];
-  overlays?.setCar(fix);
+  showCar(fix);
   follow(fix);
   send({ type: "capturing", id: ++nav.queryId, lon, lat, heading: fix.heading });
 
@@ -877,7 +962,8 @@ function stopNav(message?: string): void {
   navigator.geolocation.clearWatch(nav.watchId);
   void nav.wake?.release().catch(() => {});
   state.nav = null;
-  overlays?.setCar(null);
+  delete document.documentElement.dataset.following;
+  showCar(null);
   queueMicrotask(applyUpdates);
   if (state.sheetBeforeDrive && sheet.isSheet) sheet.set(state.sheetBeforeDrive);
   state.sheetBeforeDrive = null;
@@ -1002,6 +1088,7 @@ function applyUpdates(): void {
     }
     if (newPack) {
       state.stats = null;
+      delete document.documentElement.dataset.ready;
       state.routes = null;
       loadPack(current);
       render();
@@ -1137,7 +1224,8 @@ const search = new StopSearch({ from: $<HTMLInputElement>("fromInput"), to: $<HT
   },
   bbox: () => region.bbox,
   label: stopLabel,
-  placeholder: (stop) => (state.target === stop ? "Search, or tap the map" : "Search for a place"),
+  placeholder: (stop) => (!state.to && stop === "to" ? "Where to?" : state.target === stop ? "Search, or tap the map" : "Search for a place"),
+  here: () => void useMyLocation(),
   focused: (stop) => {
     state.target = stop;
     renderStops();
@@ -1214,11 +1302,11 @@ function readHash(): void {
 
 // ---------- wiring ----------
 
-map.on("load", () => {
-  overlays = new Overlays(map);
-  syncMapPadding(false);
+map.on("style.load", () => {
+  overlays = new Overlays(map, mapDark);
   render();
 });
+map.on("load", () => syncMapPadding(false));
 
 map.on("click", (e) => {
   const camera = overlays?.cameraAt(e.point) ?? null;
@@ -1256,13 +1344,82 @@ $("example").addEventListener("click", () => {
   if (region.example) setStops({ from: region.example.from, to: region.example.to });
 });
 $("clear").addEventListener("click", () => {
-  setStops({ from: null, to: null });
+  setStops(state.fromGps ? { to: null } : { from: null, to: null }); // where you are stays where you are
   state.fitNext = false;
 });
+for (const chip of document.querySelectorAll<HTMLButtonElement>("[data-query]")) {
+  chip.addEventListener("click", () => search.openFor("to", chip.dataset.query!));
+}
 $("drive").addEventListener("click", () => (state.drive ? stopDrive() : startDrive()));
 for (const id of ["navigate", "headNav"]) $(id).addEventListener("click", () => (state.nav ? stopNav() : startNav()));
-$("regionBtn").addEventListener("click", () => chooser.open({ current: region.id }));
+$("regionBtn").addEventListener("click", () => {
+  menu.close();
+  chooser.open({ current: region.id });
+});
 $("noticeAction").addEventListener("click", () => state.noticeAction?.run());
+
+// ---------- the menu: area, your ride, appearance, settings, about ----------
+
+const menu = $<HTMLDialogElement>("menu");
+$("menuBtn").addEventListener("click", () => {
+  renderRides();
+  syncThemeButtons();
+  menu.showModal();
+});
+$("menuClose").addEventListener("click", () => menu.close());
+menu.addEventListener("click", (e) => {
+  if (e.target === menu) menu.close(); // a tap on the backdrop
+});
+
+function renderRides(): void {
+  $("rides").replaceChildren(...RIDES.map((r) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "ride";
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", String(r.id === ride));
+    b.innerHTML = rideSvg(r.id, 40); // trusted markup, built from constants
+    const name = document.createElement("span");
+    name.textContent = r.name;
+    b.append(name);
+    b.addEventListener("click", () => {
+      ride = r.id;
+      saveRide(ride);
+      markers.you.getElement().innerHTML = rideSvg(ride);
+      renderRides();
+    });
+    return b;
+  }));
+}
+
+function syncThemeButtons(): void {
+  for (const b of document.querySelectorAll<HTMLButtonElement>("[data-theme-choice]")) {
+    b.setAttribute("aria-checked", String(b.dataset.themeChoice === theme));
+  }
+}
+
+for (const b of document.querySelectorAll<HTMLButtonElement>("[data-theme-choice]")) {
+  b.addEventListener("click", () => {
+    theme = b.dataset.themeChoice as ThemeChoice;
+    try {
+      if (theme === "auto") localStorage.removeItem(THEME_KEY);
+      else localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      /* storage blocked: it lasts until the page closes */
+    }
+    applyTheme();
+    syncThemeButtons();
+    syncMapTheme();
+  });
+}
+darkQuery.addEventListener("change", syncMapTheme);
+
+/** Give the map the basemap that matches the app's colours; the overlays go back on with it. */
+function syncMapTheme(): void {
+  if (isDark() === mapDark) return;
+  mapDark = isDark();
+  map.setStyle(mapStyle(basemap, mapDark), { diff: false });
+}
 
 // ---------- install to the home screen ----------
 

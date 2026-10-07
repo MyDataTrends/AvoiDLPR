@@ -15,7 +15,7 @@ function check(name, ok, detail = '') {
 }
 
 const ready = async (page) => {
-  await page.getByText('network loaded').waitFor({ timeout: 90_000 });
+  await page.waitForFunction(() => document.documentElement.dataset.ready === 'true', null, { timeout: 90_000 });
   await page.waitForFunction(() => window.__fw?.map.loaded() && window.__fw.state.stats, null, { timeout: 90_000 });
 };
 const goodPack = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('avoidlpr.pack.dallas') ?? 'null')?.path ?? null);
@@ -60,7 +60,7 @@ const goodPack = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('
     check('a damaged new pack gives way to the last good one', /didn't load, so this is the previous one/.test(await page.locator('#notice').innerText()),
       await page.locator('#notice').innerText());
     check('and the last good one stays the fallback', (await goodPack(page)) === dallas.pack.path);
-    await page.getByRole('button', { name: 'Try an example trip' }).tap();
+    await page.locator('#example').tap();
     await page.locator('.option').first().waitFor({ timeout: 30_000 });
     check('routing works on the fallback', (await page.locator('.option').count()) >= 2);
 
@@ -76,7 +76,8 @@ const goodPack = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('
     check('and the app is ready on it', (await page.locator('#status').innerText()).includes('network loaded'));
 
     // ---------- an update found mid-drive waits for the drive to end ----------
-    await page.getByRole('button', { name: 'Try an example trip' }).tap();
+    if (await page.locator('#example').isHidden()) await page.locator('#clear').click(); // the sample is offered with nothing planned
+    await page.locator('#example').tap();
     await page.locator('.option').first().waitFor({ timeout: 30_000 });
     await page.locator('#headNav').tap();
     check('navigation started', (await page.locator('#headNav').innerText()) === 'Stop');

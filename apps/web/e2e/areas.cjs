@@ -37,7 +37,7 @@ async function withThreeAreas(context) {
 }
 
 const ready = async (page) => {
-  await page.getByText('network loaded').waitFor({ timeout: 90_000 });
+  await page.waitForFunction(() => document.documentElement.dataset.ready === 'true', null, { timeout: 90_000 });
   await page.waitForFunction(() => window.__fw?.map.loaded(), null, { timeout: 90_000 });
 };
 const chooserOpen = (page) => page.evaluate(() => document.getElementById('chooser').open);
@@ -90,6 +90,7 @@ const chooserOpen = (page) => page.evaluate(() => document.getElementById('choos
     check('a reload opens the remembered area without asking', !(await chooserOpen(page)) && (await page.locator('#regionName').innerText()) === 'Dallas, TX');
 
     // ---------- the switcher, and closing it ----------
+    await page.locator('#menuBtn').tap(); // the area is in the menu
     await page.locator('#regionBtn').tap();
     check('the area button opens the chooser', await chooserOpen(page));
     check('the open area is marked', (await page.locator('.area[aria-current="true"] .area-name').innerText()) === 'Dallas');
@@ -152,7 +153,7 @@ const chooserOpen = (page) => page.evaluate(() => document.getElementById('choos
     await bp.goto(URL);
     await bp.locator('#chooser[open]').waitFor({ timeout: 30_000 });
     await Promise.all([bp.waitForEvent('load'), bp.locator('#chooserList .area', { hasText: 'Charlotte' }).tap()]);
-    await bp.locator('#regionName', { hasText: 'Charlotte' }).waitFor({ timeout: 30_000 });
+    await bp.locator('#regionName', { hasText: 'Charlotte' }).waitFor({ state: 'attached', timeout: 30_000 });
     check('with storage blocked, picking an area still opens it', true);
     await blocked.close();
   } finally {

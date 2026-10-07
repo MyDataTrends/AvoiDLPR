@@ -13,7 +13,7 @@ function check(name, ok, detail = '') {
 }
 
 const ready = async (page) => {
-  await page.getByText('network loaded').waitFor({ timeout: 90_000 });
+  await page.waitForFunction(() => document.documentElement.dataset.ready === 'true', null, { timeout: 90_000 });
   await page.waitForFunction(() => window.__fw?.map.loaded(), null, { timeout: 90_000 });
 };
 
@@ -48,7 +48,7 @@ function resample(coords, stepM) {
     page.on('console', (m) => m.type() === 'error' && !/failed to fetch|aborted/i.test(m.text()) && errors.push(m.text()));
     await page.goto(URL);
     await ready(page);
-    await page.getByRole('button', { name: 'Try an example trip' }).tap();
+    await page.locator('#example').tap();
     await page.locator('.option').first().waitFor();
     await page.locator('.option').first().tap(); // the fastest: the one with camera zones
     const route = await page.evaluate(() => {

@@ -1,5 +1,6 @@
-// Map setup: a self-hosted Protomaps basemap (tiles, fonts and icons all from this origin)
-// plus overlays for routes, cameras, capture zones, the GPS accuracy circle and the car.
+// Map setup: a self-hosted Protomaps basemap (tiles, fonts and icons all from this origin), in a
+// light or dark flavour to match the app, plus overlays for routes, cameras, capture zones and the
+// GPS accuracy circle. (You, on the map, are a DOM marker: your ride, from personas.ts.)
 import { layers, namedFlavor } from "@protomaps/basemaps";
 import type { Feature, FeatureCollection, Point } from "geojson";
 import {
@@ -11,18 +12,32 @@ import {
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { Protocol } from "pmtiles";
 
-import type { Fix } from "./drive.ts";
 import type { CameraDTO } from "./protocol.ts";
 
-export const COLORS = {
-  camera: "#495057",
-  /** A camera on the selected route. */
-  route: "#e03131",
-  /** A camera on the fastest route that the selected route avoids. */
-  avoided: "#2f9e44",
-  zone: "#e03131",
-  car: "#212529",
-  gps: "#1c64f2",
+/** Overlay colours per theme; they match the app's tokens (style.css). */
+const PALETTES = {
+  light: {
+    camera: "#495057",
+    /** A camera on the selected route. */
+    route: "#e03131",
+    /** A camera on the fastest route that the selected route avoids. */
+    avoided: "#2f9e44",
+    zone: "#e03131",
+    /** The selected route; the others are `alt`. */
+    accent: "#2563eb",
+    alt: "#8d96a0",
+    /** Edges drawn under routes and around camera marks, to lift them off the map. */
+    halo: "#ffffff",
+  },
+  dark: {
+    camera: "#adb5bd",
+    route: "#ff6b6b",
+    avoided: "#51cf66",
+    zone: "#ff6b6b",
+    accent: "#6b9bff",
+    alt: "#6c7480",
+    halo: "#1f2023",
+  },
 } as const;
 
 /** Where a camera stands relative to the selected route. */
@@ -32,23 +47,23 @@ const EMPTY: FeatureCollection = { type: "FeatureCollection", features: [] };
 const CAMERA_LAYERS = ["fw-cameras", "fw-cameras-any"];
 let protocolRegistered = false;
 
-/** Absolute URLs of the basemap's pieces (see data.ts): the tile archive, label fonts and icon sprites. */
+/**
+ * Absolute URLs of the basemap's pieces (see data.ts): the tile archive, label fonts and icon
+ * sprites (the dark ones when the release has them; otherwise the dark map uses the light icons).
+ */
 export interface BasemapUrls {
   pmtiles: string;
   glyphs: string;
   sprite: string;
+  spriteDark?: string;
 }
 
-export function createMap(container: HTMLElement, bbox: [number, number, number, number], urls: BasemapUrls): MapLibreMap {
-  if (!protocolRegistered) {
-    setWorkerUrl(maplibreWorkerUrl);
-    addProtocol("pmtiles", new Protocol().tile);
-    protocolRegistered = true;
-  }
-  const style: StyleSpecification = {
+/** The basemap's style, light or dark. Changing theme sets a new one (and the overlays go back on). */
+export function mapStyle(urls: BasemapUrls, dark: boolean): StyleSpecification {
+  return {
     version: 8,
     glyphs: urls.glyphs,
-    sprite: urls.sprite,
+    sprite: dark ? (urls.spriteDark ?? urls.sprite) : urls.sprite,
     sources: {
       protomaps: {
         type: "vector",
@@ -56,12 +71,21 @@ export function createMap(container: HTMLElement, bbox: [number, number, number,
         attribution: '<a href="https://protomaps.com">Protomaps</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · cameras via <a href="https://deflock.org">DeFlock</a>',
       },
     },
-    layers: layers("protomaps", namedFlavor("light"), { lang: "en" }),
+    layers: layers("protomaps", namedFlavor(dark ? "dark" : "light"), { lang: "en" }),
   };
+}
+
+export function createMap(container: HTMLElement, bbox: [number, number, number, number], urls: BasemapUrls,
+  dark: boolean): MapLibreMap {
+  if (!protocolRegistered) {
+    setWorkerUrl(maplibreWorkerUrl);
+    addProtocol("pmtiles", new Protocol().tile);
+    protocolRegistered = true;
+  }
   const [w, s, e, n] = bbox;
   return new MapLibreMap({
     container,
-    style,
+    style: mapStyle(urls, dark),
     bounds: [[w, s], [e, n]],
     maxBounds: [[w - 0.2, s - 0.15], [e + 0.2, n + 0.15]],
     attributionControl: { compact: true },
@@ -69,7 +93,7 @@ export function createMap(container: HTMLElement, bbox: [number, number, number,
 }
 
 /** An arrowhead pointing up (north); the map rotates it to each camera's bearing. */
-function arrow(fill: string): ImageData {
+function arrow(fill: string, edge: string): ImageData {
   const size = 44;
   const c = document.createElement("canvas");
   c.width = c.height = size;
@@ -81,7 +105,7 @@ function arrow(fill: string): ImageData {
   g.lineTo(7, size - 5);
   g.closePath();
   g.fillStyle = fill;
-  g.strokeStyle = "#ffffff";
+  g.strokeStyle = edge;
   g.lineWidth = 3;
   g.lineJoin = "round";
   g.stroke();
@@ -105,32 +129,35 @@ function sector(lon: number, lat: number, bearing: number, halfAngle: number, ra
 
 export interface RouteLine {
   coordinates: [number, number][];
-  color: string;
   selected: boolean;
   /** Index into the route list, so a tap on the line can select it. */
   index: number;
 }
 
+/**
+ * The app's layers on the map. Made again whenever the style changes (light to dark): a new style
+ * clears everything added to the old one, and render() puts the data back.
+ */
 export class Overlays {
   private readonly map: MapLibreMap;
 
-  constructor(map: MapLibreMap) {
+  constructor(map: MapLibreMap, dark: boolean) {
     this.map = map;
-    for (const [name, color] of [["fw-cam", COLORS.camera], ["fw-cam-route", COLORS.route],
-      ["fw-cam-avoided", COLORS.avoided], ["fw-car", COLORS.car]] as const) {
-      map.addImage(name, arrow(color), { pixelRatio: 2 });
+    const c = PALETTES[dark ? "dark" : "light"];
+    for (const [name, color] of [["fw-cam", c.camera], ["fw-cam-route", c.route], ["fw-cam-avoided", c.avoided]] as const) {
+      map.addImage(name, arrow(color, c.halo), { pixelRatio: 2 });
     }
-    for (const id of ["fw-accuracy", "fw-zones", "fw-routes", "fw-cameras", "fw-car"]) {
+    for (const id of ["fw-accuracy", "fw-zones", "fw-routes", "fw-cameras"]) {
       map.addSource(id, { type: "geojson", data: EMPTY });
     }
 
     map.addLayer({
       id: "fw-accuracy", type: "fill", source: "fw-accuracy",
-      paint: { "fill-color": COLORS.gps, "fill-opacity": 0.12, "fill-outline-color": COLORS.gps },
+      paint: { "fill-color": c.accent, "fill-opacity": 0.12, "fill-outline-color": c.accent },
     });
     map.addLayer({
       id: "fw-zones", type: "fill", source: "fw-zones", minzoom: 13,
-      paint: { "fill-color": COLORS.zone, "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.08, 16, 0.2] },
+      paint: { "fill-color": c.zone, "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.08, 16, 0.2] },
     });
     // Selected routes draw last (on top); `order` is 1 for them, 0 for the rest.
     const layout: LineLayerSpecification["layout"] = {
@@ -139,7 +166,7 @@ export class Overlays {
     map.addLayer({
       id: "fw-routes-casing", type: "line", source: "fw-routes", layout,
       paint: {
-        "line-color": "#ffffff",
+        "line-color": c.halo,
         "line-width": ["interpolate", ["linear"], ["zoom"], 10, ["case", ["get", "selected"], 7, 5], 16,
           ["case", ["get", "selected"], 14, 10]],
         "line-opacity": ["case", ["get", "selected"], 1, 0.7],
@@ -147,19 +174,20 @@ export class Overlays {
     });
     map.addLayer({
       id: "fw-routes", type: "line", source: "fw-routes", layout,
+      // The chosen route in the accent colour and the others in grey, as map apps draw options.
       paint: {
-        "line-color": ["get", "color"],
+        "line-color": ["case", ["get", "selected"], c.accent, c.alt],
         "line-width": ["interpolate", ["linear"], ["zoom"], 10, ["case", ["get", "selected"], 4.5, 3], 16,
           ["case", ["get", "selected"], 8, 6]],
-        "line-opacity": ["case", ["get", "selected"], 0.95, 0.55],
+        "line-opacity": ["case", ["get", "selected"], 0.95, 0.75],
       },
     });
     map.addLayer({
       id: "fw-cameras-any", type: "circle", source: "fw-cameras", filter: ["==", ["get", "mode"], "any"],
       paint: {
         "circle-radius": ["interpolate", ["linear"], ["zoom"], 9, 1.5, 13, 3, 16, 6],
-        "circle-color": ["match", ["get", "on"], "route", COLORS.route, "avoided", COLORS.avoided, COLORS.camera],
-        "circle-stroke-color": "#ffffff",
+        "circle-color": ["match", ["get", "on"], "route", c.route, "avoided", c.avoided, c.camera],
+        "circle-stroke-color": c.halo,
         "circle-stroke-width": 1.5,
       },
     });
@@ -180,13 +208,6 @@ export class Overlays {
       },
       paint: {
         "icon-opacity": ["interpolate", ["linear"], ["zoom"], 9, ["case", ["==", ["get", "on"], ""], 0.55, 1], 14, 1],
-      },
-    });
-    map.addLayer({
-      id: "fw-car", type: "symbol", source: "fw-car",
-      layout: {
-        "icon-image": "fw-car", "icon-rotate": ["get", "heading"], "icon-rotation-alignment": "map",
-        "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-size": 1.4,
       },
     });
   }
@@ -214,7 +235,7 @@ export class Overlays {
       type: "FeatureCollection",
       features: lines.map((l): Feature => ({
         type: "Feature",
-        properties: { color: l.color, selected: l.selected, order: l.selected ? 1 : 0, index: l.index },
+        properties: { selected: l.selected, order: l.selected ? 1 : 0, index: l.index },
         geometry: { type: "LineString", coordinates: l.coordinates },
       })),
     });
@@ -226,13 +247,6 @@ export class Overlays {
       ? { type: "FeatureCollection", features: [{ type: "Feature", properties: {},
         geometry: { type: "Polygon", coordinates: [sector(fix.lon, fix.lat, 0, 180, fix.accuracyM)] } }] }
       : EMPTY);
-  }
-
-  setCar(fix: Fix | null): void {
-    this.source("fw-car").setData(fix ? {
-      type: "FeatureCollection",
-      features: [{ type: "Feature", properties: { heading: fix.heading }, geometry: { type: "Point", coordinates: [fix.lon, fix.lat] } }],
-    } : EMPTY);
   }
 
   /** Index (into the camera list) of a camera drawn at this screen point, if any. */

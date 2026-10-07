@@ -18,7 +18,7 @@ function check(name, ok, detail = '') {
 }
 
 const ready = async (page) => {
-  await page.getByText('network loaded').waitFor({ timeout: 90_000 });
+  await page.waitForFunction(() => document.documentElement.dataset.ready === 'true', null, { timeout: 90_000 });
   await page.waitForFunction(() => window.__fw?.map.loaded(), null, { timeout: 90_000 });
 };
 const searchReady = (page) => page.waitForFunction(() => window.__fw?.search?.ready, null, { timeout: 60_000 });
@@ -103,8 +103,8 @@ async function type(page, field, text, expect) {
     await page.screenshot({ path: path.join(OUT, 'search-0-keyboard.png') });
     await page.locator('#searchClose').tap();
     await page.evaluate(() => window.__keyboard(0));
-    check('Back closes the search and puts the sheet back', !(await searching(page)) && (await sheetState(page)) === 'half'
-      && await page.locator('#sheetHead').isVisible());
+    check('Back closes the search and puts the pill back', !(await searching(page))
+      && (await page.evaluate(() => document.documentElement.dataset.mode)) === 'idle' && await page.locator('#toInput').isVisible());
     check('and the field shows what it held', (await value(page, '#toInput')) === '');
 
     // ---------- a destination by name ----------

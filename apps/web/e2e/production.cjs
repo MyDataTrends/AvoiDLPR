@@ -50,7 +50,7 @@ function check(name, ok, detail = '') {
     // ---------- first load ----------
     const response = await page.goto(APP);
     const h = response.headers();
-    await page.getByText('network loaded').waitFor({ timeout: 90_000 });
+    await page.waitForFunction(() => document.documentElement.dataset.ready === 'true', null, { timeout: 90_000 });
     check('headers: a Content-Security-Policy confines the app to itself and the data host',
       /default-src 'self'/.test(h['content-security-policy'] ?? '') && (h['content-security-policy'] ?? '').includes(`connect-src 'self' ${DATA.replace(/\/$/, '')}`), h['content-security-policy']);
     check('headers: nosniff, no referrer, and geolocation limited to this page',
@@ -64,7 +64,7 @@ function check(name, ok, detail = '') {
 
     await page.locator('#mapLocate').tap();
     await page.waitForFunction(() => document.getElementById('fromInput').value.startsWith('Your location'), null, { timeout: 15_000 });
-    await page.getByRole('button', { name: 'Try an example trip' }).tap();
+    await page.locator('#example').tap();
     await page.locator('.option').first().waitFor({ timeout: 30_000 });
     check('routing works in the production build', (await page.locator('.option').count()) >= 2);
 
@@ -95,7 +95,7 @@ function check(name, ok, detail = '') {
     // ---------- service worker ----------
     await page.evaluate(() => navigator.serviceWorker.ready);
     await page.reload();
-    await page.getByText('network loaded').waitFor({ timeout: 90_000 });
+    await page.waitForFunction(() => document.documentElement.dataset.ready === 'true', null, { timeout: 90_000 });
     const sw = await page.evaluate(async () => ({
       controlled: Boolean(navigator.serviceWorker.controller),
       caches: await Promise.all((await caches.keys()).map(async (k) => [k, (await (await caches.open(k)).keys()).map((r) => new URL(r.url).pathname)])),
@@ -114,9 +114,11 @@ function check(name, ok, detail = '') {
     offline = true;
     await ctx.setOffline(true);
     await page.reload();
-    await page.getByText('network loaded').waitFor({ timeout: 60_000 });
+    await page.waitForFunction(() => document.documentElement.dataset.ready === 'true', null, { timeout: 60_000 });
     check('offline: the app opens with no network at all', true);
-    await page.getByRole('button', { name: 'Try an example trip' }).tap();
+    // The link kept the earlier trip's pins; the sample is offered with nothing planned.
+    if (await page.locator('#example').isHidden()) await page.locator('#clear').tap();
+    await page.locator('#example').tap();
     await page.locator('.option').first().waitFor({ timeout: 30_000 });
     const offlineOptions = await page.locator('.option').count();
     check('offline: routing still works (roads and cameras come from the cache)', offlineOptions >= 2, `${offlineOptions} options`);
