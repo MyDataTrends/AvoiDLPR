@@ -6,7 +6,10 @@ export {
   zoneReferenceLength,
 } from "./geo.ts";
 export { SegmentGrid } from "./grid.ts";
-export { decodePack, type PackMeta, type RoadPack } from "./pack.ts";
+export {
+  describeStep, type Direction, formatRef, parseLabel, routeSteps, STRAIGHT_DEG, type Step, type StepType,
+} from "./guidance.ts";
+export { decodePack, GEOM_ROUNDABOUT, type PackMeta, type RoadPack } from "./pack.ts";
 export {
   canonical, decodePlaces, metresBetween, parseCoordinates, type PlaceIndex, type PlaceResult, type PlaceResultKind,
   PlaceSearch, type PlacesMeta, type SearchOptions, words,

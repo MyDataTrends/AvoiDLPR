@@ -30,6 +30,10 @@
   --error-text: #c13515;
   --notice-bg: #fff4e6;
   --notice-ink: #7a3e00;
+  /* The next-turn card: dark in both themes, like a road sign, so it reads at a glance. */
+  --guide: #1f2328;
+  --on-guide: #ffffff;
+  --guide-rule: rgb(255 255 255 / 0.18);
   --scrim: rgb(0 0 0 / 0.5);
   --shadow: rgb(0 0 0 / 0.02) 0 0 0 1px, rgb(0 0 0 / 0.04) 0 2px 6px 0, rgb(0 0 0 / 0.1) 0 4px 8px 0;
   --persona-filter: none;
@@ -73,6 +77,8 @@
     --error-text: #ff8a75;
     --notice-bg: #3a2a14;
     --notice-ink: #ffd8a8;
+    --guide: #3a3c42;
+    --on-guide: #ffffff;
     --scrim: rgb(0 0 0 / 0.6);
     --shadow: rgb(0 0 0 / 0.4) 0 0 0 1px, rgb(0 0 0 / 0.3) 0 2px 6px 0, rgb(0 0 0 / 0.45) 0 6px 14px 0;
     --persona-filter: drop-shadow(0 0 1px rgb(255 255 255 / 0.55));
@@ -104,6 +110,8 @@
   --error-text: #ff8a75;
   --notice-bg: #3a2a14;
   --notice-ink: #ffd8a8;
+  --guide: #3a3c42;
+  --on-guide: #ffffff;
   --scrim: rgb(0 0 0 / 0.6);
   --shadow: rgb(0 0 0 / 0.4) 0 0 0 1px, rgb(0 0 0 / 0.3) 0 2px 6px 0, rgb(0 0 0 / 0.45) 0 6px 14px 0;
   --persona-filter: drop-shadow(0 0 1px rgb(255 255 255 / 0.55));
@@ -845,17 +853,112 @@ a:focus-visible {
 
 /* ---------- map furniture ---------- */
 
-.banner {
+/* The next turn and the camera banner, stacked at the top of the map. Taps go through to the map. */
+.hud {
   position: absolute;
   z-index: 5;
   top: var(--top-gap);
   left: 50%;
-  max-width: min(92%, 560px);
+  display: flex;
+  width: min(92%, 560px);
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.banner {
+  max-width: 100%;
   padding: 12px 20px;
   border-radius: var(--r-full);
   box-shadow: var(--shadow);
   font-size: 15px;
-  transform: translateX(-50%);
+}
+
+/* The next maneuver: its arrow, how far, and what to do; a "Then" under it when another follows close. */
+.guide {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 52px 1fr;
+  align-items: center;
+  gap: 0 12px;
+  padding: 12px 16px;
+  border-radius: var(--r-md);
+  background: var(--guide);
+  box-shadow: var(--shadow);
+  color: var(--on-guide);
+}
+
+.guide-icon {
+  grid-row: span 2;
+}
+
+.guide-icon svg {
+  display: block;
+  width: 52px;
+  height: 52px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+}
+
+.guide-dist {
+  font-size: 26px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.guide-what {
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.guide-then {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--guide-rule);
+  font-size: 15px;
+}
+
+.guide-then svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+}
+
+/* The route's steps in the panel: an arrow, what to do, and how far to drive after it. */
+.step-list button {
+  grid-template-columns: 28px 1fr;
+  align-items: center;
+}
+
+.step-list .step-icon {
+  grid-row: span 2;
+}
+
+.step-list svg {
+  display: block;
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: var(--ink);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 
 .banner.zone {
@@ -1414,8 +1517,14 @@ dialog::backdrop {
     overflow: visible;
   }
 
-  .banner {
+  .hud {
     top: 20px;
+  }
+
+  /* Beside the trip card, over the map that's left (the card is 400 px wide, 16 px in). */
+  :root[data-mode="trip"] .hud {
+    left: calc(50% + 216px);
+    width: min(calc(100% - 520px), 560px);
   }
 }
 

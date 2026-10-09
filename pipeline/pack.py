@@ -7,6 +7,11 @@
 
 Sections are flat typed arrays so a browser maps them with zero parsing. Geometry is
 delta-coded micro-degrees (each geometry restarts absolute), which gzips well over HTTP.
+
+What turn-by-turn directions need rides along in three more sections, which a reader may go
+without (packs built before them don't have them): `labels`, a string table of UTF-8 strings each
+ended by a NUL, the first one empty; `geom_label`, each geometry's entry in it (see
+osm_graph.road_label); and `geom_flags` (osm_graph.FLAG_*).
 Cameras are deliberately *not* in the pack: they change hourly and per user report, so the
 device computes exposure itself from a separate camera feed.
 """
@@ -48,7 +53,16 @@ def pack_sections(g: RoadGraph) -> dict[str, np.ndarray]:
         "edge_h1": centideg(g.edge_h1),
         "ban_from": g.ban_from.astype(np.uint32),
         "ban_to": g.ban_to.astype(np.uint32),
+        "geom_label": g.geom_label.astype(np.uint32),
+        "geom_flags": g.geom_flags.astype(np.uint8),
+        "labels": np.frombuffer("".join(f"{s}\0" for s in g.labels).encode(), np.uint8),
     }
+
+
+def decode_labels(arrays: dict[str, np.ndarray]) -> list[str]:
+    """The `labels` section as strings ([""] for a pack without one)."""
+    raw = arrays.get("labels")
+    return [""] if raw is None else bytes(raw).decode().split("\0")[:-1]
 
 
 def pack_meta(g: RoadGraph, source: str, built_at: str, osm_at: str | None = None) -> dict:
@@ -66,7 +80,7 @@ def pack_meta(g: RoadGraph, source: str, built_at: str, osm_at: str | None = Non
 
 
 def fingerprint(meta: dict, sections: dict[str, np.ndarray]) -> str:
-    """A hash of what a pack routes like: the graph arrays and ROUTING_META.
+    """A hash of what a pack routes like and says: every section, and ROUTING_META.
 
     Two builds from the same roads get the same fingerprint even though their build times
     differ, so an area whose roads didn't change keeps its published file, and phones don't

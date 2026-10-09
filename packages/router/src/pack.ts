@@ -4,6 +4,9 @@
  * Sections map onto typed arrays without copying. Derived on load: projected vertex
  * coordinates, distance along each geometry, node positions, twin edges and the
  * banned-turn lookup.
+ *
+ * The road labels turn-by-turn directions use (`labels`, `geom_label`, `geom_flags`) came later:
+ * a pack without them decodes with every road unnamed.
  */
 
 import { LocalProjection } from "./geo.ts";
@@ -74,7 +77,16 @@ export interface RoadPack {
   hasBan: Uint8Array;
   /** Fastest speed in the pack (m/s): keeps the A* heuristic admissible. */
   maxSpeed: number;
+  /** Each geometry's road label: an index into `labels` (0: none). */
+  geomLabel: Uint32Array;
+  /** "name\x1fref\x1fdestination" per label; labels[0] is "". See pipeline/osm_graph.py, road_label. */
+  labels: string[];
+  /** GEOM_ROUNDABOUT and friends, per geometry. */
+  geomFlags: Uint8Array;
 }
+
+/** geom_flags: the geometry is part of a roundabout. */
+export const GEOM_ROUNDABOUT = 1;
 
 const MAGIC = "FWR1";
 const VERSION = 1;
@@ -98,10 +110,16 @@ export function decodePack(buf: ArrayBuffer): RoadPack {
   const meta = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 12, headerLen))) as PackMeta;
   const base = 12 + headerLen;
   const byName = new Map(meta.sections.map((s) => [s.name, s]));
-  const section = <K extends DType>(name: string, dtype: K): InstanceType<(typeof CTORS)[K]> => {
+  const optional = <K extends DType>(name: string, dtype: K): InstanceType<(typeof CTORS)[K]> | null => {
     const s = byName.get(name);
-    if (!s || s.dtype !== dtype) throw new Error(`road pack: missing ${dtype} section ${name}`);
+    if (!s) return null;
+    if (s.dtype !== dtype) throw new Error(`road pack: section ${name} is ${s.dtype}, expected ${dtype}`);
     return new CTORS[dtype](buf, base + s.offset, s.length) as InstanceType<(typeof CTORS)[K]>;
+  };
+  const section = <K extends DType>(name: string, dtype: K): InstanceType<(typeof CTORS)[K]> => {
+    const s = optional(name, dtype);
+    if (!s) throw new Error(`road pack: missing ${dtype} section ${name}`);
+    return s;
   };
 
   const proj = new LocalProjection(meta.lat0, meta.lon0);
@@ -124,6 +142,13 @@ export function decodePack(buf: ArrayBuffer): RoadPack {
   const nNodes = outPtr.length - 1;
   const nEdges = edgeDst.length;
   const scale = meta.coord_scale;
+  const labelBytes = optional("labels", "uint8");
+  const labels = labelBytes ? new TextDecoder().decode(labelBytes).split("\0").slice(0, -1) : [""];
+  const geomLabel = optional("geom_label", "uint32") ?? new Uint32Array(nGeoms);
+  const geomFlags = optional("geom_flags", "uint8") ?? new Uint8Array(nGeoms);
+  if (geomLabel.length !== nGeoms || geomFlags.length !== nGeoms || geomLabel.some((i) => i >= labels.length)) {
+    throw new Error("road pack: road labels don't match the geometry");
+  }
 
   const vx = new Float64Array(nVerts);
   const vy = new Float64Array(nVerts);
@@ -182,6 +207,6 @@ export function decodePack(buf: ArrayBuffer): RoadPack {
   return {
     meta, proj, nNodes, nEdges, nGeoms, geomPtr, vx, vy, vs, vertGeom, geomLen, geomFwd, geomRev,
     geomU, geomV, nodeX, nodeY, outPtr, edgeSrc, edgeDst, edgeGeom, edgeRev, edgeTime, edgeClass, edgeH0, edgeH1,
-    twin, banned, hasBan, maxSpeed,
+    twin, banned, hasBan, maxSpeed, geomLabel, labels, geomFlags,
   };
 }

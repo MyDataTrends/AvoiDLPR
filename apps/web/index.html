@@ -21,7 +21,16 @@
   <body>
     <div id="mapwrap">
       <main id="map" aria-label="Map"></main>
-      <div id="banner" class="banner" role="status" aria-live="assertive" hidden><strong></strong> <span></span></div>
+      <!-- Over the map while driving or previewing: the next turn (src/guide.ts), then the camera banner. -->
+      <div id="hud" class="hud">
+        <div id="guide" class="guide" hidden>
+          <span class="guide-icon" aria-hidden="true"></span>
+          <strong class="guide-dist"></strong>
+          <span class="guide-what" aria-live="polite"></span>
+          <p class="guide-then" hidden></p>
+        </div>
+        <div id="banner" class="banner" role="status" aria-live="assertive" hidden><strong></strong> <span></span></div>
+      </div>
       <button id="mapLocate" type="button" class="fab" aria-label="Use my current location">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="7.5" fill="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
       </button>
@@ -123,6 +132,10 @@
             <summary id="zonesSummary">Camera zones on this route</summary>
             <ol id="alerts" class="alerts"></ol>
           </details>
+          <details id="steps" class="zones">
+            <summary id="stepsSummary">Turn by turn</summary>
+            <ol id="stepList" class="alerts step-list"></ol>
+          </details>
         </section>
       </div>
     </aside>
@@ -157,6 +170,15 @@
           <button type="button" role="radio" data-theme-choice="light" aria-checked="false">Light</button>
           <button type="button" role="radio" data-theme-choice="dark" aria-checked="false">Dark</button>
         </div>
+      </section>
+
+      <section class="menu-section">
+        <h3>Directions</h3>
+        <label class="check">
+          <input id="voice" type="checkbox" checked />
+          Speak each turn while driving
+        </label>
+        <p id="voiceNote" class="menu-note">Spoken by your device's own voice: the street names never leave it.</p>
       </section>
 
       <section class="menu-section">

@@ -46,6 +46,7 @@ npm run phone -w @flockwatch/web                      # serve to your phone over
 The browser tests in `apps/web/e2e/` run with Playwright against the dev server and the staged
 release: `phone-and-location.cjs` (layout, route options, GPS start, preview), `appearance.cjs`
 (the menu: dark mode, your ride, quick searches), `areas.cjs` (the area chooser and switching),
+`directions.cjs` (turn by turn: the step list, the next-turn card and spoken prompts),
 `nationwide.cjs` (the map of the whole country, every camera in it, and areas loading as you go), `hold.cjs`
 (holding the map: the spot menu, and taps that no longer move the trip), `search.cjs` (places, addresses, streets and coordinates in the From
 and To fields; it needs Dallas's search index staged), `navigate.cjs` (live navigation, fed GPS
@@ -79,6 +80,14 @@ cache and rolls them forward with Geofabrik's daily changes (`pipeline/roads.py`
 carries a fingerprint of its routing content; `pipeline/decide.py` compares a rebuilt pack with
 the live one (`packages/router/bin/verify.ts` loads both) and decides: unchanged, publish, defer
 or hold. docs/DEPLOY.md, "Keeping the data fresh", has the rules.
+
+Packs also carry what turn-by-turn directions say about each road: its name, its route number
+and, on a ramp, where it's signposted to, plus a roundabout flag (`labels`, `geom_label` and
+`geom_flags`; `pipeline/pack.py`). They don't change routing, and a reader treats them as optional,
+so packs built before them still load. The router turns a route into maneuvers in
+`packages/router/src/guidance.ts`, tested on `packages/router/test/fixtures/guide.*`, made-up
+streets with a fork, a slip lane, a highway's ramps and a roundabout (`python -m pipeline.fixtures` rebuilds
+them).
 
 Packs leave out unnamed service roads (parking-lot lanes, apartment drives, alleys): they were
 45% of Dallas's edges but almost never part of a sensible route. `build_pack --with-service`

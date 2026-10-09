@@ -1,5 +1,5 @@
 // Messages between the page and its two workers: routing (worker.ts) and search (search-worker.ts).
-import type { HeadingMode, PlaceResult, ZoneParams } from "@flockwatch/router";
+import type { HeadingMode, PlaceResult, Step, ZoneParams } from "@flockwatch/router";
 
 export type ProfileName = "strict" | "default" | "loose";
 export type LonLat = [number, number];
@@ -33,6 +33,8 @@ export interface RouteDTO {
   sites: SiteDTO[];
   /** Cameras whose ring the route passes through without entering their zone. */
   near: SiteDTO[];
+  /** Turn-by-turn directions, from "Head north" to "Arrive". */
+  steps: Step[];
 }
 
 export interface Stats {
