@@ -19,7 +19,8 @@ router.setCameras(updatedRecords);                 // hourly feed, or the user's
 
 A `Route` carries `timeS`, `distanceM`, `turns`, `coordinates` ([lon, lat]) and `sites`: the
 capture sites in the order you reach them. Each has `atM` and `untilM`, metres along the route
-where its zone starts and ends; they drive the "camera ahead" and "in a camera zone" alerts.
+where its zone starts and ends; they drive the "camera ahead" and "in a camera zone" alerts. And
+`steps`, its turn-by-turn directions (below).
 
 `routeAlternatives` returns `{ routes, recommended, probes }`: up to four routes along the trip's
 time-vs-cameras frontier, fastest first, each passing strictly fewer capture sites than the one
@@ -30,6 +31,26 @@ recommendation window so the recommended route is as good as `routeWithinBudget`
 Dallas trips it takes 91 ms typically (357 ms for the slowest tenth), 5.9 searches on average; the
 recommended route has 0.71 camera zones per trip against 0.70 for the budget search. 66 trips get
 one option, 115 two, 80 three and 39 four.
+
+## Turn-by-turn directions
+
+`route.steps` lists a route's maneuvers, from `depart` to `arrive`, each with `atM` (metres along
+the route), `at` ([lon, lat]), a `direction` (`left`, `slight right`, …), the `road` it puts you on
+and, for a ramp or an exit, where it's signposted `toward`. `describeStep(step)` says it as a
+sentence: "Turn left onto Oak Avenue", "Keep right toward Downtown", "Merge onto I-35E", "At the
+roundabout, take the second exit onto Back Road".
+
+[`guidance.ts`](src/guidance.ts) only speaks up where there's a choice to get wrong. At each
+intersection it compares the turn the route takes with the other ways out (not back the way it
+came, not a banned turn): a turn of more than 35° is a turn; a nearly straight one with another
+nearly straight way out is a fork ("Keep left"), unless the road you're on plainly carries on;
+straight on onto a road with another name is "Continue onto". A road that bends with nowhere else
+to go gets nothing. Highway ramps are always announced where they start, merge, leave and end; a
+slip lane between streets is one turn, said where it starts; and a roundabout counts its exits. Highways go by their number ("I-35E"), streets by name, and a
+road with no name (a median crossing) takes the next one's within 60 m.
+
+Names come from the pack's road labels; a pack built before them gives the same maneuvers,
+unnamed. Tests: `test/guidance.test.ts`, on made-up streets (`test/fixtures/guide.*`), 12 of them.
 
 ## Place search
 

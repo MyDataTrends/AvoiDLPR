@@ -16,6 +16,7 @@ import { buildCameraSet, type CameraSet, ringCameraSet } from "./cameras.ts";
 import { computeExposure, type Exposure, withRings } from "./exposure.ts";
 import { type Camera, type CameraRecord, captures, PROFILES, RING_WEIGHT, type ZoneParams, wrap180 } from "./geo.ts";
 import { SegmentGrid } from "./grid.ts";
+import { routeSteps, type Step } from "./guidance.ts";
 import { decodePack, type RoadPack } from "./pack.ts";
 import { EdgeSearch, type Endpoint, type SearchPath, turnCost } from "./search.ts";
 
@@ -44,6 +45,8 @@ export interface Route {
   edges: number[];
   /** [lon, lat] polyline. */
   coordinates: [number, number][];
+  /** Turn-by-turn directions, from "Head north" to "Arrive" (guidance.ts). */
+  steps: Step[];
 }
 
 export interface BudgetRoute {
@@ -327,7 +330,8 @@ export class Router {
       }));
     const sites = list(span);
     const near = list(new Map([...ringSpan].filter(([site]) => !span.has(site))));
-    return { lambda, cost: path.cost, timeS, distanceM, turns, sites, near, edges, coordinates };
+    const steps = routeSteps(pack, edges, path.startOffset, path.endOffset);
+    return { lambda, cost: path.cost, timeS, distanceM, turns, sites, near, edges, coordinates, steps };
   }
 
   /** Append the stretch [a, b] (metres in travel order) of a geometry as lon/lat points. */

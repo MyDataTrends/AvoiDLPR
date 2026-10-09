@@ -7,6 +7,9 @@ Committed (small, synthetic):
   packages/router/test/fixtures/town.osm, town.fwp
       a small town on the grid's streets and its place index (pipeline/places.py): named
       streets, house numbers written every which way, and places, for the search.
+  packages/router/test/fixtures/guide.osm, guide.fwr, guide.json
+      named streets with a name change, a bend, a fork, a highway with ramps on and off and a
+      roundabout, for turn-by-turn directions.
   packages/router/test/fixtures/reference_cases.json
       sector distances, captures and direction parsing from the spike's Python reference
       (spike/routing/geometry.py), so the TypeScript port stays in lockstep.
@@ -195,6 +198,77 @@ def write_grid() -> None:
     print(f"grid: {g.n_nodes} nodes, {len(g.edge_src)} edges, {len(g.ban_from)} bans")
 
 
+GUIDE_LAT0, GUIDE_LON0 = 32.70, -96.70
+
+
+def guide_nodes() -> dict[int, tuple[float, float]]:
+    """id -> (x, y) metres east and north of (GUIDE_LON0, GUIDE_LAT0)."""
+    return {
+        1: (0, 0), 2: (200, 0), 3: (400, 0), 4: (600, 0),  # Main Street, then Commerce Street
+        5: (200, -200), 6: (200, 200), 7: (400, -200), 8: (400, 200),  # Oak Avenue, Pine Street
+        9: (200, 400), 10: (250, 480), 11: (350, 500), 12: (600, 500),  # Curvy Lane, bending east
+        13: (800, 0), 14: (1000, 60), 15: (1000, -60),  # Fork Road, then Left and Right Branch
+        16: (1100, -200), 17: (1185, -380),  # the on-ramp
+        19: (1200, -1000), 18: (1200, -300), 20: (1200, 300), 21: (1200, 1000),  # I 35E, north-south
+        22: (1220, 370), 23: (1290, 430), 24: (1300, 500), 25: (1500, 500),  # the off-ramp; Exit Street
+        27: (1500, -470), 28: (1470, -500), 29: (1500, -530), 30: (1530, -500),  # the roundabout: N, W, S, E
+        31: (1300, -500), 32: (1700, -500), 33: (1500, -1000),  # its arms
+        40: (360, 0), 41: (385, -20), 42: (400, -40),  # a slip lane from Main Street onto Pine Street
+    }
+
+
+def guide_osm() -> tuple[str, dict[int, tuple[float, float]]]:
+    """Streets for turn-by-turn directions.
+
+    Main Street runs east and becomes Commerce Street at Pine Street, then Fork Road, which splits
+    into Left Branch and Right Branch. Oak Avenue crosses Main and, north of it, carries on as Curvy
+    Lane, which bends east to Exit Street with no junction on the way. A slip lane turns right
+    from Main Street onto Pine Street, short of their intersection. Right Branch ends at an
+    on-ramp onto I 35E (Stemmons Freeway); its off-ramp, signposted Downtown, meets Exit Street,
+    and Back Road leads from there south through a roundabout and back to the highway.
+    """
+    ky = math.radians(1.0) * EARTH_RADIUS_M
+    kx = ky * math.cos(math.radians(GUIDE_LAT0))
+    nodes = {k: (round(GUIDE_LON0 + x / kx, 7), round(GUIDE_LAT0 + y / ky, 7)) for k, (x, y) in guide_nodes().items()}
+    res, ramp = {"highway": "residential"}, {"highway": "motorway_link", "oneway": "yes"}
+    ways = {
+        1: ([1, 2, 40, 3], {**res, "name": "Main Street"}), 2: ([3, 4], {**res, "name": "Commerce Street"}),
+        3: ([5, 2, 6], {**res, "name": "Oak Avenue"}), 4: ([7, 42, 3, 8], {**res, "name": "Pine Street"}),
+        5: ([6, 9, 10], {**res, "name": "Curvy Lane"}), 6: ([10, 11, 12], {**res, "name": "Curvy Lane"}),
+        7: ([4, 13], {**res, "name": "Fork Road"}),
+        8: ([13, 14], {**res, "name": "Left Branch"}), 9: ([13, 15], {**res, "name": "Right Branch"}),
+        10: ([15, 16, 17, 18], ramp),
+        11: ([19, 18, 20, 21], {"highway": "motorway", "oneway": "no", "ref": "I 35E", "name": "Stemmons Freeway"}),
+        12: ([20, 22, 23, 24], {**ramp, "destination": "Downtown"}),
+        13: ([12, 24, 25], {**res, "name": "Exit Street"}),
+        14: ([25, 27], {"highway": "tertiary", "name": "Back Road"}),
+        15: ([27, 28, 29, 30, 27], {"highway": "tertiary", "junction": "roundabout"}),
+        16: ([28, 31], {**res, "name": "Circle West"}), 17: ([30, 32], {**res, "name": "Circle East"}),
+        18: ([29, 33, 19], {"highway": "tertiary", "name": "Back Road"}),
+        19: ([40, 41, 42], {"highway": "primary_link", "oneway": "yes"}),
+    }
+    out = ['<?xml version="1.0" encoding="UTF-8"?>', '<osm version="0.6" generator="flockwatch-fixtures">']
+    for nid, (lon, lat) in nodes.items():
+        out.append(f'  <node id="{nid}" version="1" lat="{lat}" lon="{lon}"/>')
+    for wid, (refs, tags) in ways.items():
+        nds = "".join(f'<nd ref="{n}"/>' for n in refs)
+        tg = "".join(f'<tag k="{k}" v="{v}"/>' for k, v in tags.items())
+        out.append(f'  <way id="{wid}" version="1">{nds}{tg}</way>')
+    out.append("</osm>")
+    return "\n".join(out) + "\n", nodes
+
+
+def write_guide() -> None:
+    osm = TS_FIXTURES / "guide.osm"
+    xml, nodes = guide_osm()
+    osm.write_text(xml)
+    g = build_graph(osm)
+    write_pack(TS_FIXTURES / "guide.fwr", pack_meta(g, osm.name, "fixture"), pack_sections(g))
+    (TS_FIXTURES / "guide.json").write_text(json.dumps({
+        "note": "OSM node id -> [lon, lat]; see pipeline/fixtures.py, guide_osm", "nodes": nodes}, indent=1))
+    print(f"guide: {g.n_nodes} nodes, {len(g.edge_src)} edges, {len(g.labels) - 1} road labels")
+
+
 def write_reference_cases() -> None:
     geo = _spike("geometry")
     rng = np.random.default_rng(42)
@@ -299,6 +373,7 @@ def main() -> None:
     args = ap.parse_args()
     write_grid()
     write_town()
+    write_guide()
     write_reference_cases()
     if args.dallas:
         write_dallas()

@@ -58,11 +58,12 @@ is a good place to learn more.
    trade a few minutes for fewer camera zones, each labelled with its time, its number of
    zones and how many cameras it passes near. The one marked *Recommended* avoids the most zones while adding no more than about
    10% to the trip. You pick.
-4. **Drive.** Tap **Start** and AvoiDLPR follows your phone's GPS along the route: a warning
-   before each camera zone, a banner and a chime while you're in one, and a new route if you
-   leave this one. Keep the app open with the screen on; phones pause web apps in the
-   background. (**Preview** plays the trip back on the map in about 30 seconds, to see where
-   the zones are.)
+4. **Drive.** Tap **Start** and AvoiDLPR follows your phone's GPS along the route: turn-by-turn
+   directions (the next turn at the top of the screen, and spoken ahead of time, "In a quarter
+   mile, turn left onto Oak Avenue"), a warning before each camera zone, a banner and a chime
+   while you're in one, and a new route if you leave this one. Keep the app open with the screen
+   on; phones pause web apps in the background. (**Preview** plays the trip back on the map in
+   about 30 seconds, to see where the zones are; the route's turns are listed under its options.)
 
 The map covers the whole lower 48, and routing works in 135 metro areas, one at a time. Zoom in on
 yours, search for it by name, or tap the locate button, and that area's road map and its list of
@@ -88,6 +89,9 @@ a hatchback, pickup, van or scooter, your choice.
 - **So does search.** Most map apps send everything you type to their servers. AvoiDLPR
   downloads your area's addresses and places once and looks them up on your phone, so what you
   search for stays there too.
+- **So do spoken directions.** Turns are read out by your phone's own voice. Some browsers also
+  offer voices that run on a server; AvoiDLPR never uses those, since the words name the streets
+  you're about to drive. With no on-device voice, directions stay on screen.
 - **No account, no ads, no analytics.** The app remembers your area, your ride and light or
   dark, on your device.
 - Like any online map, it downloads map images for the area on screen. Those come from

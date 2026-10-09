@@ -221,8 +221,8 @@ fresh downloads, new basemaps, and a correction for anything the nightly updates
 2. **Rebuild the packs, not the basemap.** Every area's road pack is rebuilt from the updated
    roads. The basemap is cosmetic and search indexes change slowly, so both stay monthly (a
    brand-new area is already on the country's basemap).
-3. **Same roads, same file.** A pack carries a fingerprint of its routing content (the graph,
-   not the build date). A rebuild with the live fingerprint is *unchanged*: nothing is uploaded
+3. **Same roads, same file.** A pack carries a fingerprint of its content (the graph and the
+   road names directions use, not the build date). A rebuild with the live fingerprint is *unchanged*: nothing is uploaded
    and phones keep what they have.
 4. **Check before switching.** A changed pack is loaded next to the live one by the router's own
    check (`packages/router/bin/verify.ts`): it has to decode, keep its road-edge count within
@@ -233,7 +233,10 @@ fresh downloads, new basemaps, and a correction for anything the nightly updates
    changed. The nightly update republishes an area when that's 1% or more, or when its live pack
    is a week old; a smaller fix is *deferred* until one of those is true. (A Dallas pack is a
    12.5 MB download; daily replacements for one-street fixes would cost phones hundreds of MB a
-   month.) Both thresholds are at the top of `pipeline/decide.py`.
+   month.) Both thresholds are at the top of `pipeline/decide.py`. A change to road names
+   alone changes no edges, so it waits for the week: that's how the road names for turn-by-turn
+   directions first reach the live packs, within a week of the nightly update building them (or
+   at the next monthly build).
 6. **Switch, then drop the old file.** `regions.json` moves to the new files in one write, and
    only when something changed; the manifest it replaces is kept as `regions.prev.json`. The
    daily cleanup deletes a pack, search index or basemap once no manifest has named it for a
@@ -286,7 +289,10 @@ fresh downloads, new basemaps, and a correction for anything the nightly updates
   overlap so most trips inside a metro work; routing across the country would need the road
   network in tiles, loaded along the way.
 - Live navigation needs the app open with the screen on: phones pause web pages in the
-  background. There are no turn-by-turn directions yet, just the route line and camera alerts.
+  background.
+- Turn-by-turn directions name streets only with packs built since road names went into them.
+  An older pack still gives every turn, unnamed ("Turn left"); see "Keeping the data fresh" for
+  when the named ones arrive.
 - Search knows what OpenStreetMap knows. House numbers are thorough in some counties and sparse
   in others; a number that isn't mapped is placed between its neighbours (and marked
   approximate) or, failing that, the app offers the street. There's no typo tolerance yet, and a

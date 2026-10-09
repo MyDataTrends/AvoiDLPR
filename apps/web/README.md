@@ -28,15 +28,18 @@ It looks and works like other map apps; [docs/DESIGN.md](../../docs/DESIGN.md) h
   passes near (see **Rings** below). "Recommended" is the fewest cameras within 10% more time. Select one from its card, or by tapping its line on
   the map; a camera it avoids turns green and one it passes turns red.
 - **Read the alerts.** *N camera zones on this route*, under the options, lists them and the
-  cameras it passes near; tap one to fly to it. **Preview** plays the trip back in about 30
+  cameras it passes near; tap one to fly to it. *Turn by turn* lists the route's maneuvers the
+  same way. **Preview** plays the trip back in about 30
   seconds with "camera ahead", "in a camera zone" and "near a camera" alerts.
-- **Drive.** **Start** follows the device's GPS along the route: a warning before each camera
+- **Drive.** **Start** follows the device's GPS along the route: the next turn in a card at the
+  top of the map, spoken twice (about half a minute ahead at your speed, "In a quarter mile, turn
+  left onto Oak Avenue", and again as it comes up), a warning before each camera
   zone (earlier at speed), a banner, chime and vibration in one, a quieter banner near one, a new
   route when you leave this one, and the screen kept awake. Start sits in the sheet's header on a phone, so it's in reach
   at any height.
 - **Make it yours.** The menu (top right) has your ride (a hatchback, pickup, van or scooter
   that stands for you on the map); Appearance (Auto follows the device, or Light or Dark, the
-  map included); the alert sound and camera-zone model; install help; the map key; and how
+  map included); spoken directions on or off; the alert sound and camera-zone model; install help; the map key; and how
   current the data is.
 
 Nothing leaves the device. The road network, search index, camera feed, basemap tiles, fonts and
@@ -164,6 +167,7 @@ is the one you want. `-- --port 5000` changes the port and `-- --no-build` skips
 | `src/main.ts` | Boot from the manifest, trip state, route options, markers (your ride among them), URL-hash state, drive playback, live navigation, area switching, the menu and theme, install hint, service worker registration |
 | `src/sheet.ts` | The panel as a bottom sheet on phones: drag, fling or press Up/Down on the handle between peek, half and full |
 | `src/location.ts` | One-shot Geolocation with plain-language failures (blocked, unavailable, timed out, insecure page) |
+| `src/guide.ts` | Turn by turn on screen and out loud: the next-turn card, the route's step list, maneuver arrows, and spoken prompts in an on-device voice (the steps come from the router's `guidance.ts`) |
 | `src/drive.ts` | Position and heading along a route, and matching a GPS fix to it, measured in the pack's projection so distances match the router's alerts |
 | `src/format.ts` | Distances in miles and feet in the US (by the browser's locale), else kilometres |
 
@@ -249,6 +253,14 @@ or not. It serves a manifest in that form, reusing Dallas's files, and a made-up
 the camera-ahead, in-zone and near-a-camera alerts, the route card's count of cameras it passes
 near, going off route and rerouting, arriving, and that no position reaches the URL.
 
+[`e2e/directions.cjs`](e2e/directions.cjs) (27 checks) covers turn by turn on the example trip,
+so it runs against any staged area: the route's steps in order and listed in the panel (a tap
+shows one on the map), the next-turn card in a preview and while driving (the maneuver that really
+is next, the camera banner under it, beside the trip card on a wide screen), spoken prompts while
+driving with a stand-in for the browser's speech (early and as each turn comes up, arriving, only
+in the on-device voice, silent in a preview), the menu's switch (remembered), and a browser whose
+only voice would send the text to a server (it stays quiet).
+
 [`e2e/appearance.cjs`](e2e/appearance.cjs) (14 checks) covers the menu and the look: Auto
 following the device into dark mode with the map switching too, Light and Dark overriding it,
 the overlays coming back after a style switch, picking a ride and seeing it on the map, both
@@ -293,8 +305,10 @@ node ~/.claude/skills/playwright-skill/run.js e2e/production.cjs
 - **Route options.** Computing them takes about 30 ms typically and up to ~120 ms on long trips
   in Dallas, in the worker.
 - **Navigation needs the app on screen.** Phones pause web pages in the background, so it works
-  with the app open and the screen on (it asks the browser to keep the screen awake). No
-  turn-by-turn directions yet: the route line and the camera alerts.
+  with the app open and the screen on (it asks the browser to keep the screen awake).
+- **Directions in English, and names only from new packs.** Instructions and the voice are
+  English. A road pack built before road names went into it gives every maneuver unnamed
+  ("Turn left"). No lane guidance, and no exit numbers yet.
 - **Search knows what OpenStreetMap knows.** Addresses are thorough in some counties and sparse
   in others: a missing house number is placed between its neighbours and marked approximate, or
   the app offers the street. No typo tolerance yet, and only the open area is searched.

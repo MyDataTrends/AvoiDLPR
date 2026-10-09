@@ -27,6 +27,25 @@ export function distance(m: number): string {
   return m < 1000 ? `${Math.max(10, Math.round(m / 10) * 10)} m` : `${(m / 1000).toFixed(1)} km`;
 }
 
+/**
+ * A distance to say out loud, rounded the way people say them: "500 feet", "a quarter mile",
+ * "1.5 miles"; "300 meters", "2 kilometers".
+ */
+export function spokenDistance(m: number): string {
+  if (IMPERIAL) {
+    const mi = m / M_PER_MI;
+    if (mi < 0.2) return `${Math.max(100, Math.round((m * FT_PER_M) / 100) * 100)} feet`;
+    if (mi < 0.375) return "a quarter mile";
+    if (mi < 0.625) return "half a mile";
+    if (mi < 0.875) return "three quarters of a mile";
+    if (mi < 1.25) return "1 mile";
+    return `${Math.round(mi * 2) / 2} miles`;
+  }
+  if (m < 1000) return `${Math.max(50, Math.round(m / 50) * 50)} meters`;
+  const km = Math.round(m / 500) / 2;
+  return `${km} kilometer${km === 1 ? "" : "s"}`;
+}
+
 /** A GPS accuracy radius: "±80 ft" or "±25 m". */
 export function accuracy(m: number): string {
   return IMPERIAL ? `±${Math.max(10, Math.round((m * FT_PER_M) / 10) * 10).toLocaleString("en-US")} ft` : `±${Math.round(m)} m`;

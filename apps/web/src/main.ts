@@ -10,6 +10,7 @@ import {
 } from "./data.ts";
 import { type Fix, Polyline } from "./drive.ts";
 import { accuracy, cameraZones, distance, duration, extraTime, nearCameras, siteTitle, watches } from "./format.ts";
+import { GuideCard, Prompter, stepItems, stepText, Voice } from "./guide.ts";
 import { onHold } from "./hold.ts";
 import { insideBox, LocateError, locate } from "./location.ts";
 import { type BasemapUrls, type Bbox, type CameraState, createMap, fence, mapStyle, Overlays } from "./map.ts";
@@ -512,6 +513,8 @@ function render(): void {
     $("options").replaceChildren(...(state.routing ? [placeholderCard("Finding routes…")] : []));
     $("zones").hidden = true;
     $("alerts").replaceChildren();
+    $("steps").hidden = true;
+    $("stepList").replaceChildren();
     return;
   }
 
@@ -524,6 +527,23 @@ function render(): void {
     : `Passes ${nearCameras(m)}`;
   const items = [...route.sites.map((s) => ({ s, near: false })), ...route.near.map((s) => ({ s, near: true }))];
   $("alerts").replaceChildren(...items.sort((a, b) => a.s.atM - b.s.atM).map(({ s, near }) => alertItem(s, near)));
+  renderSteps(route);
+}
+
+/** The selected route's turns, listed; a tap shows that one on the map. */
+function renderSteps(route: RouteDTO): void {
+  const turns = route.steps.filter((s) => s.type !== "depart" && s.type !== "arrive").length;
+  $("steps").hidden = !route.steps.length;
+  $("stepsSummary").textContent = `Turn by turn · ${turns} ${turns === 1 ? "turn" : "turns"}`;
+  $("stepList").replaceChildren(...stepItems(route.steps, destinationName(), (s) => {
+    if (sheet.isSheet) sheet.set("peek");
+    map.flyTo({ center: s.at, zoom: 17 });
+  }));
+}
+
+/** What the destination is called, for "Arrive at …". */
+function destinationName(): string | undefined {
+  return state.names.to?.text;
 }
 
 /** Idle (nothing planned: the "Where to?" pill) or trip (a destination: the route sheet or card). */
@@ -714,10 +734,14 @@ function setBanner(kind: "zone" | "ahead" | "near" | "clear" | null, title = "",
  */
 function viewPadding(): { top: number; left: number; right: number; bottom: number } {
   const trip = document.documentElement.dataset.mode === "trip";
+  // While following a route, the next turn and the banner cover the top.
+  const hud = document.documentElement.dataset.following ? $("hud").getBoundingClientRect().bottom + 12 : 0;
   // (Asked while the sheet is being made, too: so the screen's width, not `sheet`.)
-  if (!matchMedia("(max-width: 760px)").matches) return { top: 24, left: trip ? 432 : 0, right: 72, bottom: 24 }; // the card, the menu orb
+  if (!matchMedia("(max-width: 760px)").matches) return { top: Math.max(24, hud), left: trip ? 432 : 0, right: 72, bottom: 24 }; // the card, the menu orb
   // The pill and its quick searches at the top, or the route sheet at the bottom.
-  return { top: trip ? 72 : 136, left: 0, right: 0, bottom: trip ? Math.min(sheetPx, window.innerHeight * 0.55) : 0 };
+  return {
+    top: Math.max(trip ? 72 : 136, hud), left: 0, right: 0, bottom: trip ? Math.min(sheetPx, window.innerHeight * 0.55) : 0,
+  };
 }
 
 function syncMapPadding(animate: boolean): void {
@@ -750,6 +774,9 @@ function startDrive(): void {
     lastQuery: 0, queryId: 0, inZone: [], nearLive: [], zone: "", zoneUntil: 0, near: "", nearUntil: 0, lastDistM: 0,
   };
   document.documentElement.dataset.following = "drive";
+  // Both up before the map frames the drive, so it frames the part they leave clear.
+  guide.show(route.steps, 0, destinationName());
+  setBanner("clear", "Starting the preview…");
   $("drive").textContent = "Stop preview";
   if (sheet.isSheet) {
     state.sheetBeforeDrive = sheet.state;
@@ -782,6 +809,7 @@ function tick(now: number): void {
   // navigation does. While you move the map yourself it waits, then brings your ride back.
   if (!map.isMoving()) map.jumpTo({ center: [fix.lon, fix.lat] });
   showDriveBanner(fix, d, now);
+  guide.show(d.route.steps, fix.distM, destinationName());
   if (fix.distM >= d.line.lengthM - 0.5) {
     const n = d.route.sites.length;
     stopDrive(`Arrived · passed ${cameraZones(n)}`);
@@ -851,9 +879,11 @@ function stopDrive(message?: string): void {
   cancelAnimationFrame(d.raf);
   state.drive = null;
   delete document.documentElement.dataset.following;
+  guide.hide();
   showCar(null);
   queueMicrotask(applyUpdates);
   $("drive").textContent = "Preview";
+  if (!sheet.isSheet) syncMapPadding(true);
   if (state.sheetBeforeDrive && sheet.isSheet) sheet.set(state.sheetBeforeDrive);
   state.sheetBeforeDrive = null;
   if (!message) {
@@ -886,6 +916,46 @@ const AHEAD_S = 25;
 
 let audio: AudioContext | null = null;
 
+// ---------- turn by turn ----------
+//
+// The next maneuver in a card over the map while previewing or driving, and, while driving,
+// spoken twice: early, and as it comes up (src/guide.ts). Only an on-device voice speaks.
+
+const VOICE_KEY = "avoidlpr.voice";
+const guide = new GuideCard($("guide"));
+const voice = new Voice(syncVoice);
+const prompter = new Prompter(speak);
+
+function speak(text: string): void {
+  if ($<HTMLInputElement>("voice").checked) voice.say(text);
+}
+
+/** The menu's switch: whether there's a voice to speak with, and whether to. */
+function syncVoice(): void {
+  const box = $<HTMLInputElement>("voice");
+  box.disabled = !voice.available;
+  $("voiceNote").textContent = voice.available
+    ? "Spoken by your device's own voice: the street names never leave it."
+    : "This browser has no voice that runs on your device, so directions stay on screen.";
+}
+
+syncVoice();
+try {
+  $<HTMLInputElement>("voice").checked = localStorage.getItem(VOICE_KEY) !== "off";
+} catch {
+  /* storage blocked: on, as by default */
+}
+$("voice").addEventListener("change", () => {
+  const on = $<HTMLInputElement>("voice").checked;
+  if (!on) voice.stop();
+  try {
+    if (on) localStorage.removeItem(VOICE_KEY);
+    else localStorage.setItem(VOICE_KEY, "off");
+  } catch {
+    /* storage blocked: it lasts until the page closes */
+  }
+});
+
 function startNav(): void {
   const route = selectedRoute();
   if (!route || !state.stats) return;
@@ -897,6 +967,10 @@ function startNav(): void {
     return;
   }
   stopDrive();
+  // Said in the tap's handler, which is what lets a browser speak at all.
+  prompter.reset();
+  speak(stepText(route.steps[0]));
+  guide.show(route.steps, 0, destinationName());
   try {
     audio ??= new AudioContext(); // created in the tap's handler, so the browser allows sound
     void audio.resume();
@@ -920,6 +994,7 @@ function startNav(): void {
     sheet.set("peek");
   }
   setBanner("clear", "Waiting for GPS…", "Keep the app open with the screen on");
+  if (!sheet.isSheet) syncMapPadding(true); // the next turn and the banner now cover the top
   render();
 }
 
@@ -959,6 +1034,8 @@ function onNavFix(p: GeolocationPosition): void {
     return;
   }
   const shown = showDriveBanner(fix, nav, performance.now(), Math.max(ALERT_AHEAD_M, nav.speedMps * AHEAD_S));
+  guide.show(nav.route.steps, fix.distM, destinationName());
+  prompter.update(nav.route.steps, fix.distM, nav.speedMps, destinationName());
   if (shown.kind === "zone" && nav.shown !== "zone") chime("zone");
   if (shown.kind === "ahead" && !nav.announced.has(shown.site)) {
     nav.announced.add(shown.site);
@@ -989,6 +1066,7 @@ function reroute(nav: Nav, lon: number, lat: number, acc: number): void {
   const now = performance.now();
   if (now - nav.lastReroute < REROUTE_GAP_MS || state.routing || !state.to) return;
   nav.lastReroute = now;
+  speak("Rerouting");
   state.from = [lon, lat];
   state.fromGps = { accuracyM: acc };
   writeHash();
@@ -1004,6 +1082,8 @@ function followSelectedRoute(): void {
   nav.line = routeLine(route);
   nav.lastDistM = 0;
   nav.zoneUntil = 0;
+  prompter.reset();
+  guide.show(route.steps, 0, destinationName());
 }
 
 function chime(kind: "zone" | "ahead"): void {
@@ -1031,6 +1111,9 @@ function stopNav(message?: string): void {
   void nav.wake?.release().catch(() => {});
   state.nav = null;
   delete document.documentElement.dataset.following;
+  guide.hide();
+  if (!message) voice.stop(); // a Stop tap cuts it off; an arrival lets it finish
+  if (!sheet.isSheet) syncMapPadding(true);
   showCar(null);
   queueMicrotask(applyUpdates);
   if (state.sheetBeforeDrive && sheet.isSheet) sheet.set(state.sheetBeforeDrive);

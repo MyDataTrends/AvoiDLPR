@@ -46,6 +46,7 @@ The dark palette is our own.
 | `--alert` | #e03131 | #c92a2a | The zone banner and Stop, both with white text |
 | `--ahead` | #f59f00 | #fab005 | The "camera ahead" banner (dark text) |
 | `--ok` / `--ok-soft` | #2f9e44 / #ebfbee | #51cf66 / #1d3324 | "No camera zones" |
+| `--guide` / `--on-guide` | #1f2328 / #ffffff | #3a3c42 / #ffffff | The next-turn card |
 
 Text on a coloured surface keeps at least 4.5:1 contrast. That's why `--alert` exists: the dark
 map needs a lighter red (#ff6b6b) to show, but white text on it is only 2.8:1, so banners and
@@ -85,7 +86,7 @@ planned, `trip` with a destination), `data-searching` (a search field has focus)
 | Nothing planned | The **Where to?** pill and quick searches at the top, the menu button beside them, locate at the bottom right | The same, at the top left |
 | Searching | Full-screen search: back button, the From and To fields, results sized to what the keyboard leaves | Results open under the fields, in the card |
 | A trip | A bottom sheet (peek, half, full) with Start in its header, so it's in reach at any height | A 400 px card at the top left, over the map |
-| Previewing or driving | The sheet drops to its peek, the menu button goes, a banner at the top, the map follows your ride | The banner at the top, the map follows |
+| Previewing or driving | The sheet drops to its peek, the menu button goes, the next turn and a banner at the top, the map follows your ride | The next turn and the banner at the top, beside the card; the map follows |
 
 The map's own padding tracks whatever covers it (the sheet, the card, the pill), so fitting a
 route or following your ride always targets the part of the map you can see.
@@ -108,11 +109,19 @@ route or following your ride always targets the part of the map you can see.
   here*, the reports with a muted second line saying where they go. A tap elsewhere, Escape or its
   close button closes it. A plain tap on the map sets nothing (except after *Choose on the map*,
   when a banner says to tap), so panning can't move the trip.
+- **Next turn.** A card at the top of the map while previewing or driving, dark in both themes
+  like a road sign: the maneuver's arrow (52 px, a 2.4-unit round stroke like the other icons),
+  how far (26 px, tabular figures) and what to do ("Take the exit on the right toward Downtown",
+  18 px). When another maneuver follows within 200 m, a "Then" line under a rule shows it with a
+  small arrow. It's not red or amber: those are for cameras, and the camera banner sits under it.
+  Route numbers don't break at their hyphen.
+- **Turn by turn.** Under the camera zones in a trip, a list like theirs: an arrow, what to do and
+  how far to drive after it. A tap shows that spot on the map.
 - **Banner.** A pill at the top of the map while previewing or driving: red with white text in a
   camera zone, cream with dark amber text (the notice colours) near a camera, amber with dark
   text for a camera ahead, the canvas colour otherwise.
 - **Menu.** A dialog from the round button at the top right, a bottom sheet on phones: your area,
-  your ride, Appearance (Auto, Light, Dark), camera alerts (sound, which zone model), install
+  your ride, Appearance (Auto, Light, Dark), spoken directions, camera alerts (sound, which zone model), install
   help, the map key and where the data comes from.
 
 ## Your ride

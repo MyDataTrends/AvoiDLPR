@@ -45,7 +45,7 @@ function toDTO(r: Route): RouteDTO {
   });
   return {
     timeS: r.timeS, distanceM: r.distanceM, turns: r.turns, coordinates: r.coordinates,
-    sites: r.sites.map(site), near: r.near.map(site),
+    sites: r.sites.map(site), near: r.near.map(site), steps: r.steps,
   };
 }
 

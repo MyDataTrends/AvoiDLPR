@@ -7,6 +7,10 @@ strongly connected component, so any snapped point can reach any other.
 
 Coordinates are quantised to integer micro-degrees (~0.1 m) before anything is measured,
 so lengths and headings agree with what a device decodes from the pack.
+
+Each geometry also keeps what turn-by-turn directions say about its road: its name, its route
+number and, on a ramp, where it leads ("toward Downtown"), plus whether it's part of a
+roundabout. None of that changes a route.
 """
 
 from __future__ import annotations
@@ -47,6 +51,23 @@ NO_ACCESS = {"no", "private", "agricultural", "forestry"}
 _MAXSPEED = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(mph)?\s*$")
 _TURN_OF_KIND = {"left_turn": "left", "right_turn": "right", "straight_on": "straight",
                  "u_turn": "u"}
+#: Separates a label's fields (name, ref, destination) in the pack's string table.
+LABEL_SEP = "\x1f"
+#: geom_flags bits.
+FLAG_ROUNDABOUT = 1
+_UNSAFE = str.maketrans({LABEL_SEP: " ", "\0": " "})  # the label and string-table separators
+
+
+def road_label(tags: dict) -> str:
+    """What directions call a road: "name<US>ref<US>destination", or "" for a road with none.
+
+    The destination is a ramp's signposted one ("toward Downtown"), or failing that the route
+    numbers it leads to. Multiple values (`;`) read as a list.
+    """
+    clean = lambda v: "; ".join(p.strip() for p in (v or "").split(";") if p.strip()).translate(_UNSAFE)  # noqa: E731
+    name, ref = clean(tags.get("name")), clean(tags.get("ref"))
+    dest = clean(tags.get("destination") or tags.get("destination:ref") or tags.get("destination:street"))
+    return "" if not (name or ref or dest) else LABEL_SEP.join((name, ref, dest))
 
 
 def parse_maxspeed(value: str | None) -> float | None:
@@ -102,6 +123,8 @@ class _Collector(osmium.SimpleHandler):
         self.way_refs: list[np.ndarray] = []
         self.way_coords: list[np.ndarray] = []  # (k, 2) int64 micro-degrees (lon, lat)
         self.way_attrs: list[tuple[int, float, bool, bool, int]] = []  # class, km/h, fwd, rev, id
+        self.way_labels: list[str] = []  # road_label()
+        self.way_flags: list[int] = []  # FLAG_*
         self.signals: set[int] = set()
         self.restrictions: list[tuple[str, int, int, int]] = []  # kind, from way, via node, to way
         self.unsupported_restrictions = 0  # via-way, multi-member or unknown kinds
@@ -129,6 +152,9 @@ class _Collector(osmium.SimpleHandler):
         self.way_coords.append(np.array(
             [(round(n.location.x / 10), round(n.location.y / 10)) for n in w.nodes], np.int64))
         self.way_attrs.append((HIGHWAY_CLASSES.index(hw), kmh, fwd, rev, w.id))
+        self.way_labels.append(road_label(tags))
+        roundabout = tags.get("junction") in ("roundabout", "circular")
+        self.way_flags.append(FLAG_ROUNDABOUT if roundabout else 0)
 
     def relation(self, r) -> None:
         tags = {t.k: t.v for t in r.tags}
@@ -160,6 +186,9 @@ class RoadGraph:
     geom_ptr: np.ndarray  # (g + 1,) offsets into the vertex arrays
     geom_q: np.ndarray  # (v, 2) int64 micro-degrees (lon, lat)
     geom_way: np.ndarray  # (g,) OSM way id
+    geom_label: np.ndarray  # (g,) index into `labels`
+    geom_flags: np.ndarray  # (g,) FLAG_* bits
+    labels: list[str]  # road_label() strings; labels[0] is "", for roads with none
     edge_src: np.ndarray  # (m,) ascending; edges are numbered in this order
     edge_dst: np.ndarray
     edge_geom: np.ndarray
@@ -228,6 +257,7 @@ def build_graph(path: str, *, include_service: bool = False) -> RoadGraph:
     g_kmh = np.array(attrs[1], np.float64)[gw]
     g_fwd, g_rev = np.array(attrs[2], bool)[gw], np.array(attrs[3], bool)[gw]
     g_way = np.array(attrs[4], np.int64)[gw]
+    g_flags = np.array(h.way_flags, np.uint8)[gw]
     node_refs = np.unique(refs[cuts])
     gu, gv = np.searchsorted(node_refs, refs[gi]), np.searchsorted(node_refs, refs[gj])
 
@@ -288,6 +318,9 @@ def build_graph(path: str, *, include_service: bool = False) -> RoadGraph:
         h.restrictions, ref_to_node, e_src, e_dst, e_way, e_h0, e_h1, out_ptr)
 
     vkeep = np.repeat(keep_g, n_v)
+    # Labels of the roads that survived, numbered in order of first use; 0 is "no label".
+    label_of = {"": 0}
+    g_label = np.array([label_of.setdefault(h.way_labels[w], len(label_of)) for w in gw[keep_g].tolist()], np.uint32)
     stats = {
         "drivable_ways": len(h.way_refs), "service_ways_skipped": h.service_ways_skipped,
         "incomplete_ways": h.incomplete_ways,
@@ -301,7 +334,8 @@ def build_graph(path: str, *, include_service: bool = False) -> RoadGraph:
     return RoadGraph(
         lat0=float(lat0), lon0=float(lon0),
         geom_ptr=np.concatenate([[0], np.cumsum(n_v[keep_g])]), geom_q=q[vkeep],
-        geom_way=g_way[keep_g], edge_src=e_src, edge_dst=e_dst, edge_geom=e_geom, edge_rev=e_rev,
+        geom_way=g_way[keep_g], geom_label=g_label, geom_flags=g_flags[keep_g], labels=list(label_of),
+        edge_src=e_src, edge_dst=e_dst, edge_geom=e_geom, edge_rev=e_rev,
         edge_len=e_len, edge_time=e_time, edge_class=e_class, edge_h0=e_h0, edge_h1=e_h1,
         ban_from=ban_from, ban_to=ban_to, n_nodes=n_nodes, stats=stats,
     )

@@ -1,9 +1,10 @@
 import numpy as np
 import pytest
 
-from pipeline.fixtures import grid_nodes, grid_osm
-from pipeline.osm_graph import COORD_SCALE, build_graph, turn_class
-from pipeline.pack import decode_vertices, pack_meta, pack_sections, read_pack, write_pack
+from pipeline.fixtures import grid_nodes, grid_osm, guide_osm
+from pipeline.osm_graph import COORD_SCALE, FLAG_ROUNDABOUT, LABEL_SEP, build_graph, road_label, turn_class
+from pipeline.pack import (decode_labels, decode_vertices, fingerprint, pack_meta, pack_sections, read_pack,
+                           write_pack)
 
 
 @pytest.fixture(scope="module")
@@ -100,3 +101,38 @@ def test_pack_round_trip(grid, tmp_path):
     for name, arr in sections.items():
         np.testing.assert_array_equal(arrays[name], arr)
     np.testing.assert_array_equal(decode_vertices(arrays), grid.geom_q)
+
+
+def test_road_label():
+    assert road_label({"highway": "residential"}) == ""
+    assert road_label({"name": "Oak Avenue"}) == LABEL_SEP.join(["Oak Avenue", "", ""])
+    assert road_label({"name": "Central Expressway", "ref": "US 75; TX 289"}) == LABEL_SEP.join(
+        ["Central Expressway", "US 75; TX 289", ""])
+    assert road_label({"highway": "motorway_link", "destination": "Downtown;Plano"}) == LABEL_SEP.join(
+        ["", "", "Downtown; Plano"])
+    assert road_label({"highway": "motorway_link", "destination:ref": "I 30"}).endswith("I 30")
+    assert "\0" not in road_label({"name": "Bad\0Name\x1f"})
+
+
+def test_labels_ride_in_the_pack_without_changing_the_routing(tmp_path):
+    xml, _ = guide_osm()
+    (tmp_path / "guide.osm").write_text(xml)
+    g = build_graph(tmp_path / "guide.osm")
+    sections = pack_sections(g)
+    write_pack(tmp_path / "guide.fwr", pack_meta(g, "guide.osm", "test"), sections)
+    meta, arrays = read_pack(tmp_path / "guide.fwr")
+    labels = decode_labels(arrays)
+    assert labels == g.labels and labels[0] == ""
+    named = {labels[i].split(LABEL_SEP)[0] for i in arrays["geom_label"]}
+    assert {"Main Street", "Commerce Street", "Stemmons Freeway", "Back Road", ""} <= named
+    assert [labels[i] for i in arrays["geom_label"]].count(LABEL_SEP.join(["", "", "Downtown"])) == 1
+    ring = arrays["geom_flags"] & FLAG_ROUNDABOUT
+    assert ring.sum() == 4  # the roundabout's four quarters
+    assert {labels[i] for i in arrays["geom_label"][ring > 0]} == {""}
+    # The routing sections are what they always were; renaming a road changes the fingerprint.
+    renamed = {**sections, "labels": np.frombuffer(bytes(sections["labels"]).replace(b"Oak", b"Elm"), np.uint8)}
+    assert fingerprint(meta, renamed) != fingerprint(meta, sections)
+
+
+def test_a_pack_without_labels_reads_as_unnamed():
+    assert decode_labels({}) == [""]
