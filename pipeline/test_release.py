@@ -1,4 +1,5 @@
 import json
+import sys
 
 import pytest
 
@@ -333,7 +334,8 @@ def test_a_batch_downloads_each_state_once_merges_and_survives_a_bad_region(tmp_
     # each state filtered once, merged once, then one cut per region
     # each state filtered once (roads, then places), merged once, then cut per region (roads, then
     # places; the region that failed gets no search index)
-    assert [c[1] for c in calls if c[0] == "osmium"] == ["tags-filter"] * 4 + ["merge"] * 2 + ["extract"] * 5
+    assert [c[1] for c in calls if c[0] == "osmium"] == ["tags-filter"] * 4 + ["extract"] * 5
+    assert [c[2] for c in calls if c[0] == sys.executable] == ["pipeline.merge"] * 2
     assert [(r["id"], r["ok"]) for r in report] == [("a", True), ("b", True), ("big", False)]
     assert "too big for a phone" in report[2]["error"] and not (tmp_path / "data" / "packs" / "big.fwr").exists()
     assert report[0]["edges"] == 78 and report[0]["pack_bytes"] > 0
