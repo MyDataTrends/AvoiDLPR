@@ -8,8 +8,9 @@
 //   indexes        its checksum and decoded), older versions of that area are dropped, and only
 //                  the last few areas are kept. Until then the old one stays, as the fallback.
 //   fonts/sprites  cache-first: immutable.
-//   regions.json   network-first with a cached fallback: it says which pack is current.
-//   camera feeds   network-first with a cached fallback: they change hourly.
+//   regions.json   network-first, falling back to the cached copy offline or when the host
+//                  errors (5xx): it says which pack is current.
+//   camera feeds   network-first with the same fallback: they change hourly.
 // Map tiles are range requests into one big file; those are never touched, so the browser and
 // PMTiles handle them. (Offline tiles would be a separate, opt-in download.)
 //
@@ -114,6 +115,8 @@ async function networkFirst(event, request) {
   try {
     const response = await fetch(request);
     if (response.ok) event.waitUntil(cache.put(request, response.clone()));
+    // A data host having trouble (a 5xx) is like no network: the last good copy beats an error.
+    if (response.status >= 500) return (await cache.match(request, { ignoreVary: true })) ?? response;
     return response;
   } catch (err) {
     const hit = await cache.match(request, { ignoreVary: true });

@@ -64,7 +64,9 @@ def run_checked(cmd: Sequence[str]) -> None:
 
 
 def merge_command(sources: Sequence[Path], target: Path) -> list[str]:
-    return ["osmium", "merge", *(str(s) for s in sources), "--overwrite", "-o", str(target)]
+    """The states' files merged, the newest version of each object only (pipeline/merge.py: a road
+    across a state line can be two versions in two states' files, which `osmium merge` would keep)."""
+    return [sys.executable, "-m", "pipeline.merge", *(str(s) for s in sources), "-o", str(target)]
 
 
 def extract_command(region: Region, source: Path, target: Path, strategy: str = "complete_ways") -> list[str]:
